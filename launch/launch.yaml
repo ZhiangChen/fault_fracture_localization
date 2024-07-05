@@ -1,0 +1,7 @@
+launch:
+
+  - node:
+    pkg: "manual_control"
+    exec: "manual_control"
+    name: "manual_control"
+    output: "screen"
