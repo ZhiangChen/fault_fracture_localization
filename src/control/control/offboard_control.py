@@ -15,7 +15,7 @@ class OffboardControl(Node):
 
     def __init__(self):
         super().__init__("offboard")
-        #self.status_sub = self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status", self.vehicle_status_callback, qos_profile)
+        self.status_sub = self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status", self.vehicle_status_callback, 10)
         self.offboard_mode_publisher = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", 10)
         self.trajectory_publisher = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 10)
         self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
@@ -56,6 +56,9 @@ class OffboardControl(Node):
 
     def debug_callback(self, data):
         self.get_logger().info(str(data.z) + " " + str(data.vz))
+
+    def vehicle_status_callback():
+        pass            # TODO fill this out after implementing state
 
 
     def publish_offboard_mode(self):
