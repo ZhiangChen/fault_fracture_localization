@@ -2,7 +2,7 @@ import rclpy
 import numpy as np
 from rclpy.node import Node
 from rclpy.clock import Clock
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
@@ -10,12 +10,17 @@ from px4_msgs.msg import VehicleCommand
 from px4_msgs.msg import VehicleStatus
 from px4_msgs.msg import VehicleLocalPosition
 
-
 class OffboardControl(Node):
 
     def __init__(self):
         super().__init__("offboard")
-        self.status_sub = self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status", self.vehicle_status_callback, 10)
+
+        qos_best_effort_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1)
+        self.status_sub = self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status", self.vehicle_status_callback, qos_best_effort_profile)
         self.offboard_mode_publisher = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", 10)
         self.trajectory_publisher = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 10)
         self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
@@ -57,8 +62,9 @@ class OffboardControl(Node):
     def debug_callback(self, data):
         self.get_logger().info(str(data.z) + " " + str(data.vz))
 
-    def vehicle_status_callback():
-        pass            # TODO fill this out after implementing state
+    def vehicle_status_callback(self, data):
+        # TODO
+        pass
 
 
     def publish_offboard_mode(self):
@@ -76,9 +82,9 @@ class OffboardControl(Node):
             self.arm()
         self.publish_offboard_mode()
         if (self.time < 250):
-            self.publish_trajectory_command(0, 0, -5)
+            self.publish_trajectory_command(0.0, 0.0, -5.0)
         else:
-            self.publish_trajectory_command(0, 0, -.1) 
+            self.publish_trajectory_command(0.0, 0.0, -.1) 
         self.time += 1
 
 def main(args = None):

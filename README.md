@@ -3,7 +3,7 @@
 A UAV based solution to earthquake damage zone estimations. 
 
 ## Supported Versions
-This project is built and tested on ROS 2 Jazzy, PX4 1.14, and Ubuntu Noble. Other configurations have not been tested and compatibility is unknown.
+This project is built and tested on ROS 2 Humble, PX4 1.14, Ubuntu Jammy, and JetPack 6.0. Other configurations have not been tested and compatibility is unknown.
 
 ## Build 
 
