@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 import os
 from glob import glob
 
-package_name = 'control'
+package_name = 'fault_fracture_localization'
 
 setup(
     name=package_name,
@@ -17,15 +17,16 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='frank',
-    maintainer_email='frank@todo.todo',
+    maintainer_email='frank@caltech.edu',
     description='TODO: Package description',
     license='TODO: License declaration',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'offboard_control = control.offboard_control:main',
-            'perception = control.perception:main',
-            'optimization = control.optimization:main',
+            'offboard_control = src.offboard_control:main',
+            'perception = src.perception:main',
+            'optimization = src.optimization:main',
+            'state_machine = src.state_machine:main'
         ],
     },
 )

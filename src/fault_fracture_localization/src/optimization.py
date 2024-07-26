@@ -1,19 +1,24 @@
 import rclpy
 from rclpy.node import Node
 from custom_msgs.msg._trajectory_coordinates import TrajectoryCoordinates
+from sensor_msgs.msg import Image
 import numpy as np
 from scipy.interpolate import interpolate
-import matplotlib.pyplot as plt
 
 
 class Optimization(Node):
     def __init__(self):
         super().__init__("optimization")
-        self.publisher = self.create_publisher(TrajectoryCoordinates, "trajectory", 10)
+        self.trajectory_publisher = self.create_publisher(TrajectoryCoordinates, "trajectory", 10)
+        self.heatmap_subscriber = self.create_subscription(Image, "heatmap", self.heatmap_callback(), 10)
         # TODO subsribe to state
 
         #Number of points/derivatives per unit
         self.point = 10
+
+    def heatmap_callback(self, data):
+        pass
+
 
        
     def cmd_callback(self, data):
@@ -24,7 +29,7 @@ class Optimization(Node):
         xmin, xmax = x.min, x.max
         xx = np.linspace(xmin, xmax, int(self.point * (x.max - x.min)))
         spline = interpolate.BSpline(t, c, k, extrapolate = False)
-        self.publish_trajectory_coordinates(spline(xx))
+        #self.publish_trajectory_coordinates(spline(xx))
 
 
     def publish_trajectory_coordinates(self, spline):
