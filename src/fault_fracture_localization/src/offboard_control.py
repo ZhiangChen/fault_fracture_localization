@@ -321,28 +321,28 @@ class OffboardControl(Node):
             t.y = 20.
             t.z = -20.
             t.yaw = 0.
-            t.velocity_x = 5.
-            t.velocity_y = 5.
-            t.velocity_z = 5.
-            t.velocity_yaw = 5.
+            t.velocity_x = 0.
+            t.velocity_y = 0.
+            t.velocity_z = 0.
+            t.velocity_yaw = 0.
             e = Waypoint()
             e.x = 20.
             e.y = 30.
             e.z = -40.
             e.yaw = 0.
-            e.velocity_x = 5.
-            e.velocity_y = 5.
-            e.velocity_z = 5.
-            e.velocity_yaw = 5.
+            e.velocity_x = 0.
+            e.velocity_y = 0.
+            e.velocity_z = 0.
+            e.velocity_yaw = 0.
             w = Waypoint()
             w.x = 30.
             w.y = 30.
             w.z = -20.
             w.yaw = 0.
-            w.velocity_x = 5.
-            w.velocity_y = 5.
-            w.velocity_z = 5.
-            w.velocity_yaw = 5.
+            w.velocity_x = 0.
+            w.velocity_y = 0.
+            w.velocity_z = 0.
+            w.velocity_yaw = 0.
             self.trajectory_generator.add_waypoint(t)
             self.trajectory_generator.add_waypoint(e)
             self.trajectory_generator.add_waypoint(w)
@@ -356,7 +356,7 @@ class OffboardControl(Node):
                 pass
             else:
                 self.publish_trajectory_command(0., 0., -.1, 0.)
-        elif (self.time > 30):
+        elif (self.time > 50):
                 self.publish_trajectory_command(0., 0., -2., 0.)
         self.time += 1
 
