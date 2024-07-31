@@ -12,16 +12,16 @@ import cv2
 import numpy as np
 from cv_bridge import CvBridge
 from ultralytics import YOLO
-from time import time
+from collections import deque
+
 
 model = YOLO('fracture-detector.engine', task='segment') 
 
 class Perception(Node):
     def __init__(self):
         super().__init__("perception")
-        camera_callback_group = MutuallyExclusiveCallbackGroup()
-        odometry_callback_group = MutuallyExclusiveCallbackGroup()
 
+        # QOS profiles
         qos_best_effort_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -29,12 +29,20 @@ class Perception(Node):
             depth=1
         )
 
+        # Callback groups
+        camera_callback_group = MutuallyExclusiveCallbackGroup()
+        odometry_callback_group = MutuallyExclusiveCallbackGroup()
+
+        # Subscriptions
         self.camera_subscription = self.create_subscription(Image, "/camera", self.camera_callback, 10, callback_group=camera_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
-        self.uav_pose_cache = []
-        self.uav_pose_cache_max_length = 200
+
+        # Publishers
         self.segmentation_publisher = self.create_publisher(Image, "mask", 10)
         self.heatmap_publisher = self.create_publisher(Image, "heatmap", 10)
+
+        # Heatmap Generation
+        self.uav_pose_cache = deque(maxlen=200)
         self.camera_intrinsic = np.array([[861.923198, 0, 960.0],
                       [0, 980.985917, 540.0],
                       [0, 0, 1]])  # Hardcoded intrinsic matrix TODO migrate to YAML file
@@ -127,9 +135,6 @@ class Perception(Node):
         #self.get_logger().info(self.uav_pose_to_string(uav_pose))
         self.uav_pose_cache.append((uav_pose, msg.timestamp))
         
-        if len(self.uav_pose_cache) > self.uav_pose_cache_max_length:
-            del self.uav_pose_cache[0]
-
 
     def camera_callback(self, image):
         """

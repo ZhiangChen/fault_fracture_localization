@@ -10,7 +10,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from collections import deque
 from custom_msgs.srv._waypoint_service import WaypointService
 
-from geometry_msgs.msg import Pose, PoseStamped
+from geometry_msgs.msg import Pose
 from nav_msgs.msg import Path
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
@@ -145,7 +145,7 @@ class TrajectoryGenerator:
 
         path = Path()
         path.poses = debug
-        #path.header.stamp=self.node.get_clock().now().nanoseconds
+        #path.header.stamp=self.node-.get_clock().now().nanoseconds
         path.header.frame_id = "uav"
         self.node.path_publisher.publish(path)
 
@@ -187,37 +187,45 @@ class OffboardControl(Node):
     def __init__(self):
         super().__init__("offboard")
 
+        # QOS profiles
         qos_best_effort_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1)
         
-
+        # Callback groups
         odometry_callback_group = MutuallyExclusiveCallbackGroup()
         timer_callback_group = MutuallyExclusiveCallbackGroup()
 
-
+        # Subscriptions
         self.status_sub = self.create_subscription(VehicleStatus, "/fmu/out/vehicle_status", self.vehicle_status_callback, qos_best_effort_profile)
+        self.uav_pose_subscriber = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
+
+        # Publishers
         self.offboard_mode_publisher = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", 10)
         self.trajectory_publisher = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 10)
         self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
         self.path_publisher = self.create_publisher(Path, "path", 10)
-        #self.position_sub = self.create_subscription(VehicleLocalPosition, "/fmu/out/sensor_combined", self.debug_callback, 10)
+
+        # Services
         self.waypoint_service = self.create_service(WaypointService, "waypoint", self.waypoint_callback)
-        self.uav_pose_subscriber = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
-        self.uav_pose_cache = []
+
+        # PID
+        self.pid_x = PID(1., 0.00, 0.01)
+        self.pid_y = PID(1., 0.00, 0.01)
+        self.pid_z = PID(1., 0.00, 0.01)
+        self.pid_yaw = PID(2.0, 0.0, 0.0)
+
+        # Path planning
+        self.uav_pose_cache = deque(maxlen=500)
         self.last_update = self.get_clock().now().nanoseconds
-        self.uav_pose_cache_max_length = 500
         self.trajectory_generator = TrajectoryGenerator(self)
         self.distance_threshold = 5 # distance we are next to waypoint by before switching to next waypoint
         self.time = 0
         timer_period = .01
         self.timer_ = self.create_timer(timer_period, self.timer_callback, callback_group=timer_callback_group)
-        self.pid_x = PID(1., 0.00, 0.01)
-        self.pid_y = PID(1., 0.00, 0.01)
-        self.pid_z = PID(1., 0.00, 0.01)
-        self.pid_yaw = PID(2.0, 0.0, 0.0)
+
 
 
     def arm(self):
@@ -302,9 +310,6 @@ class OffboardControl(Node):
         uav_pose.orientation.w = float(msg.q[3])
         #self.get_logger().info(self.uav_pose_to_string(uav_pose))
         self.uav_pose_cache.append((uav_pose, msg.timestamp))
-        
-        if len(self.uav_pose_cache) > self.uav_pose_cache_max_length:
-            del self.uav_pose_cache[0]
 
     def vehicle_status_callback(self, data):
         """Callback function for VehicleStatus subscription. Function currently TODO"""
@@ -336,6 +341,11 @@ class OffboardControl(Node):
         msg.velocity = True
         msg.acceleration = False
         self.offboard_mode_publisher.publish(msg)
+
+    def uav_takeoff(self):
+        """
+        Initiates the sequence needed for the UAV to takeoff and hover at a specified height
+        """
 
     def timer_callback(self):
         """
