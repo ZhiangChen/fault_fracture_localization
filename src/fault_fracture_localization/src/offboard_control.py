@@ -256,6 +256,9 @@ class OffboardControl(Node):
         self.vehicle_command_publisher_.publish(msg)
 
     def publish_trajectory_command(self, x, y, z, yaw):
+        """
+
+        """
         msg = TrajectorySetpoint()
         msg.timestamp = int(Clock().now().nanoseconds / 1000)
         msg.position = [float('nan'), float('nan'), float('nan')]
@@ -263,6 +266,7 @@ class OffboardControl(Node):
         msg.acceleration = [float('nan'), float('nan'), float('nan')]
         #msg.yawspeed = yaw
         self.trajectory_publisher.publish(msg)
+
     def uav_pose_to_string(self, uav_pose):
         """
         Generates string of uav pose for debugging purposes
@@ -280,10 +284,7 @@ class OffboardControl(Node):
 
 
     def uav_pose_callback(self, msg):
-        """        self.pid_x = PID(2.0, 0.1, 0.0)
-        self.pid_y = PID(0.8, 0.1, 0.0)
-        self.pid_z = PID(0.8, 0.1, 0.0)
-        self.pid_yaw = PID(2.0, 0.1, 0.0)
+        """
         Callback function for VehicleOdometry subscription. Adds current pose and timestamp
         to cache.
 
@@ -306,63 +307,45 @@ class OffboardControl(Node):
             del self.uav_pose_cache[0]
 
     def vehicle_status_callback(self, data):
+        """Callback function for VehicleStatus subscription. Function currently TODO"""
         # TODO
         pass
 
     def waypoint_callback(self, request, response):
+        """
+        Acknowledges a waypoint service call and appends the waypoint to the queue 
+
+        Parameters:
+        request (Waypoint): Part of the WaypointService server message. The point to add to the UAV path
+        response (Bool): Part of the WaypointService server message. Boolean acknowleging if message was recieved
+        
+        Returns:
+        Bool: indiciation if the message was recieved
+        """
         self.trajectory_generator.add_waypoint(request.waypoint)
         response.ack = True
         #self.get_logger().info("waypoint recieved and acknowleged")
         return response
 
     def publish_offboard_mode(self):
+        """
+        Publishes a PX4 OffboardControl message that indicates the UAV is flying in velocity mode
+        """
         msg = OffboardControlMode()
         msg.position = False
         msg.velocity = True
         msg.acceleration = False
         self.offboard_mode_publisher.publish(msg)
 
-
-    def generate_trajectory(self):
-        # first determine the current UAV pose
-        current_time = self.get_clock().now().nanoseconds
-        
-
-        uav_pose = self.uav_pose_cache[-1][0]
-
-        next_point = self.trajectory_generator.next_point()
-        if next_point is None:
-            #self.get_logger().info("No next point recieved!")
-            return None
-
-        orientation = uav_pose.orientation
-        position = uav_pose.position
-        dt = (current_time - self.last_update) / 10000000 # to seconds
-
-        current_heading = Rotation.from_quat([orientation.w, orientation.x, orientation.y, orientation.z]).as_euler('zyx')
-        x_vel = self.pid_x.update(position.x, next_point.x, dt) + next_point.velocity_x
-        y_vel = self.pid_y.update(position.y, next_point.y, dt) + next_point.velocity_y
-        z_vel = self.pid_z.update(position.z + 4, next_point.z, dt) + next_point.velocity_z
-        #self.get_logger().info('pose x: ' + str(uav_pose.position.x) + " next x: " + str(next_point.x))
-        #self.get_logger().info('pose y: ' + str(uav_pose.position.y) + " next y: " + str(next_point.y))
-        #self.get_logger().info('pose z: ' + str(uav_pose.position.z + 4) + " next z: " + str(next_point.z))
-        #self.get_logger().info("current pid: " + str(x_vel) + " "+ str(y_vel) + " "+ str(z_vel) + " ")
-        yaw_vel = self.pid_yaw.update(current_heading[0], next_point.yaw, dt) + next_point.velocity_yaw
-
-        self.last_update = current_time
-
-        
-
-        return [x_vel, y_vel, z_vel, yaw_vel]
-
-
     def timer_callback(self):
+        """
+        Callback for the timer and the main loop. Controls interfacing with drone movement
+        """
         if (self.time == 250):
             self.get_logger().info("initing")
             self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
             self.arm()
             
-
 
         self.publish_offboard_mode()
         if (self.time > 1501):
@@ -391,7 +374,7 @@ class OffboardControl(Node):
                 #self.get_logger().info('pose z: ' + str(uav_pose.position.z + 4) + " next z: " + str(next_point.z))
                 #self.get_logger().info("current pid: " + str(x_vel) + " "+ str(y_vel) + " "+ str(z_vel) + " ")
                 yaw_vel = self.pid_yaw.update(current_heading[0], next_point.yaw, dt) + next_point.velocity_yaw
-                #self.publish_trajectory_command(x_vel , y_vel, z_vel, yaw_vel)
+                self.publish_trajectory_command(x_vel , y_vel, z_vel, yaw_vel)
 
             self.last_update = current_time
         elif (self.time == 1500):

@@ -15,6 +15,7 @@ class StateMachine(Node):
         timer_callback_group = MutuallyExclusiveCallbackGroup()
         heatmap_callback_group = MutuallyExclusiveCallbackGroup()
         super().__init__("statemachine")
+        states = [] # states
         self.waypoint_client = self.create_client(WaypointService, "waypoint")
         while not self.waypoint_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info("waypoint service not availible, retrying")

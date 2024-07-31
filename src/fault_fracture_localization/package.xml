@@ -3,9 +3,9 @@
 <package format="3">
   <name>fault_fracture_localization</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="frank@todo.todo">frank</maintainer>
-  <license>TODO: License declaration</license>
+  <description>UAV based approach to fracture damage detection</description>
+  <maintainer email="frank@caltech.edu">Frank Xiao</maintainer>
+  <license>Apache 2.0</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>px4_msgs</exec_depend>
