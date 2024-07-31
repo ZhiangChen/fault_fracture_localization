@@ -341,6 +341,8 @@ class Perception(Node):
     
     def update_heatmap(self, mask, uav_pose):
         heatmap = self.camera_projection(mask, uav_pose)
+        if heatmap is None:
+            return
         # kernel for dilation
         kernel = np.ones((5, 5), dtype = np.uint8)
         heatmap = cv2.dilate(heatmap, kernel, iterations=1)

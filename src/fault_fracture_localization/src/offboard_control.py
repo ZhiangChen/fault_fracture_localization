@@ -73,10 +73,24 @@ class TrajectoryGenerator:
         return round(point1.x) == round(point2.x) and round(point1.y) == round(point2.y) and round(point1.z) == round(point2.z) and round(point1.yaw) == round(point2.yaw)
 
     def add_waypoint(self, waypoint):
+        """
+        Adds a waypoint to the path
+
+        Parameters: 
+        waypoint (Waypoint): The waypoint to add to the path
+        """
+        self.node.get_logger().info("new waypoint recieved!")
         if len(self.waypoints) == 0 or not self.is_same(self.waypoints[-1], waypoint):
             self.waypoints.append(waypoint)
 
     def generate_path(self):
+        """
+        Generates a B-spline path which interpolates all current waypoints on the path
+
+        Returns:
+        numpy.ndarray: Array of Waypoint objects indicating the sequence of points that should be broadcast at the given Hertz,
+                        None if interpolation cannot be performed
+        """
         if len(self.waypoints) <= 3:
             return None
 
@@ -138,6 +152,12 @@ class TrajectoryGenerator:
         return actual
     
     def next_point(self):
+        """
+        Gets the next point that should be broadcast
+
+        Returns:
+        Waypoint: Waypoint object of the next point to be broadcast, None if there are no more points
+        """
         if len(self.current_path) < 1:
             new_path = self.generate_path()
             if new_path is not None:
@@ -190,7 +210,7 @@ class OffboardControl(Node):
         self.last_update = self.get_clock().now().nanoseconds
         self.uav_pose_cache_max_length = 500
         self.trajectory_generator = TrajectoryGenerator(self)
-        self.distance_threshold = 5 # distance we are next to waypoint by before switching to next waypoing
+        self.distance_threshold = 5 # distance we are next to waypoint by before switching to next waypoint
         self.time = 0
         timer_period = .01
         self.timer_ = self.create_timer(timer_period, self.timer_callback, callback_group=timer_callback_group)
@@ -215,6 +235,14 @@ class OffboardControl(Node):
         self.get_logger().info("Disarm command sent")
 
     def publish_vehicle_command(self, command, param1 = 0.0, param2=0.0):
+        """
+        Publishes a VehicleCommand message to PX4
+
+        Parameters:
+        command: a PX4 command 
+        param1: a value corresponding to the param1 field in the PX4 VehicleCommand message
+        param2: a value corresponding to the param2 field in the PX4 VehicleCommand message
+        """
         msg = VehicleCommand()
         msg.param1 = param1
         msg.param2 = param2
@@ -282,9 +310,9 @@ class OffboardControl(Node):
         pass
 
     def waypoint_callback(self, request, response):
-        #self.get_logger().info(str(data.x))
-        self.trajectory_generator.add_waypoint(request)
+        self.trajectory_generator.add_waypoint(request.waypoint)
         response.ack = True
+        #self.get_logger().info("waypoint recieved and acknowleged")
         return response
 
     def publish_offboard_mode(self):
@@ -315,9 +343,9 @@ class OffboardControl(Node):
         x_vel = self.pid_x.update(position.x, next_point.x, dt) + next_point.velocity_x
         y_vel = self.pid_y.update(position.y, next_point.y, dt) + next_point.velocity_y
         z_vel = self.pid_z.update(position.z + 4, next_point.z, dt) + next_point.velocity_z
-        self.get_logger().info('pose x: ' + str(uav_pose.position.x) + " next x: " + str(next_point.x))
-        self.get_logger().info('pose y: ' + str(uav_pose.position.y) + " next y: " + str(next_point.y))
-        self.get_logger().info('pose z: ' + str(uav_pose.position.z + 4) + " next z: " + str(next_point.z))
+        #self.get_logger().info('pose x: ' + str(uav_pose.position.x) + " next x: " + str(next_point.x))
+        #self.get_logger().info('pose y: ' + str(uav_pose.position.y) + " next y: " + str(next_point.y))
+        #self.get_logger().info('pose z: ' + str(uav_pose.position.z + 4) + " next z: " + str(next_point.z))
         #self.get_logger().info("current pid: " + str(x_vel) + " "+ str(y_vel) + " "+ str(z_vel) + " ")
         yaw_vel = self.pid_yaw.update(current_heading[0], next_point.yaw, dt) + next_point.velocity_yaw
 
@@ -358,12 +386,12 @@ class OffboardControl(Node):
                 x_vel = self.pid_x.update(position.x, next_point.x, dt) + next_point.velocity_x
                 y_vel = self.pid_y.update(position.y, next_point.y, dt) + next_point.velocity_y
                 z_vel = self.pid_z.update(position.z + 6, next_point.z, dt) + next_point.velocity_z
-                self.get_logger().info('pose x: ' + str(uav_pose.position.x) + " next x: " + str(next_point.x))
-                self.get_logger().info('pose y: ' + str(uav_pose.position.y) + " next y: " + str(next_point.y))
-                self.get_logger().info('pose z: ' + str(uav_pose.position.z + 4) + " next z: " + str(next_point.z))
+                #self.get_logger().info('pose x: ' + str(uav_pose.position.x) + " next x: " + str(next_point.x))
+                #self.get_logger().info('pose y: ' + str(uav_pose.position.y) + " next y: " + str(next_point.y))
+                #self.get_logger().info('pose z: ' + str(uav_pose.position.z + 4) + " next z: " + str(next_point.z))
                 #self.get_logger().info("current pid: " + str(x_vel) + " "+ str(y_vel) + " "+ str(z_vel) + " ")
                 yaw_vel = self.pid_yaw.update(current_heading[0], next_point.yaw, dt) + next_point.velocity_yaw
-                self.publish_trajectory_command(x_vel , y_vel, z_vel, yaw_vel)
+                #self.publish_trajectory_command(x_vel , y_vel, z_vel, yaw_vel)
 
             self.last_update = current_time
         elif (self.time == 1500):
