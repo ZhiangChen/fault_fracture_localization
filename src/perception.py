@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import rclpy
 import transforms3d
 from scipy.spatial.transform import Rotation
@@ -15,7 +16,7 @@ from ultralytics import YOLO
 from collections import deque
 
 
-model = YOLO('fracture-detector.engine', task='segment') 
+model = YOLO('src/fault_fracture_localization/fracture-detector.engine', task='segment') 
 
 class Perception(Node):
     def __init__(self):

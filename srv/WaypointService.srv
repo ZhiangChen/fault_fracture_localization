@@ -1,3 +1,4 @@
+string action
 Waypoint waypoint
 ---
 bool ack

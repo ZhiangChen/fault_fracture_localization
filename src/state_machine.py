@@ -1,8 +1,9 @@
+#!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
 from rclpy.clock import Clock
-from custom_msgs.srv._waypoint_service import WaypointService
-from custom_msgs.msg._waypoint import Waypoint
+from fault_fracture_localization.srv._waypoint_service import WaypointService
+from fault_fracture_localization.msg._waypoint import Waypoint
 from sensor_msgs.msg import Image
 from px4_msgs.msg import VehicleOdometry
 from geometry_msgs.msg import Pose
@@ -16,6 +17,7 @@ from scipy.spatial.transform import Rotation
 
 class StateMachine(Node):
     def __init__(self):
+        super().__init__("statemachine")
 
         # QOS profiles
         qos_best_effort_profile = QoSProfile(
@@ -58,20 +60,30 @@ class StateMachine(Node):
                   "return", # UAV is returning to the startpoint
                   "resuming", # UAV is recovering its state and in the process of resuming the search
                   "hover", # UAV is hovering in place
+                  "prompting", # UAV is prompting user for feedback
                   ] # states for the FSM
         transitions = [
-            { 'trigger': 'startup', 'source': 'idle', 'dest': 'initiation' },
-            { 'trigger': 'takeoff', 'source': 'initiation', 'dest': 'takeoff' },
-            { 'trigger': 'hover', 'source': ['takeoff', 'following', 'searching', 'return', 'resuming'], 'dest': 'hover' },
+            { 'trigger': 'startup', 'source': 'idle', 'dest': 'initiation' }, # UAV starts up from idle
+            { 'trigger': 'takeoff', 'source': 'initiation', 'dest': 'takeoff' }, # UAV arms and takes off from ground
+            { 'trigger': 'resuming', 'source': 'takeoff', 'dest': 'resuming' }, # UAV finishes takeoff and resumes previous search
+            { 'trigger': 'start_search', 'source': 'takeoff', 'dest': 'searching' }, # UAV starts a new search
+            { 'trigger': 'fault_detected', 'source': 'searching', 'dest': 'following' }, # UAV finds a fault and starts to follow it
+            { 'trigger': 'end_trace', 'source': 'following', 'dest': 'searching' }, # trace presumably ends, UAV goes back to searching
+            { 'trigger': 'none_found', 'source': 'searching', 'dest': 'prompting' }, # no fault was found so the UAV prompts the user
+            { 'trigger': 'new_point', 'source': 'prompting', 'dest': 'resuming' }, # UAV moves to location of new prompted point
+            { 'trigger': 'arrived', 'source': 'resuming', 'dest': 'searching' }, # UAV arrives at the resuming point
+            { 'trigger': 'arrived', 'source': 'resuming', 'dest': 'searching' }, # UAV arrives at the resuming point
+            #{ 'trigger': 'hover', 'source': ['takeoff', 'following', 'searching', 'return', 'resuming'], 'dest': 'hover' },
+            #{ 'trigger': 'return', 'source': ['takeoff', 'following', 'searching', 'hover', 'resuming'], 'dest': 'return' },
         ]
         self.machine = Machine(model=self, states=states, transitions=transitions, initial="idle")
         
 
     def on_enter_takeoff(self):
-        # take off
-        pass
+        self.waypoint_request("takeoff", 0., 0., -100., 0., 0., 0.)
+
     
-    def on_enter_initiation(self):
+    def on_enter_startup(self):
         #prompt for info
 
         # First save the point where UAV started 
@@ -115,7 +127,7 @@ class StateMachine(Node):
         #self.get_logger().info(self.uav_pose_to_string(uav_pose))
         self.uav_pose_cache.append((uav_pose, msg.timestamp))
 
-    def waypoint_request(self, x, y , z, yaw, x_vel, y_vel, z_vel, yaw_vel):
+    def waypoint_request(self, action, x, y , z, yaw, x_vel, y_vel, z_vel, yaw_vel):
         waypoint = Waypoint()
         waypoint.timestamp = int(Clock().now().nanoseconds / 1000)
         waypoint.x = x
@@ -127,6 +139,7 @@ class StateMachine(Node):
         waypoint.velocity_z = z_vel
         waypoint.velocity_yaw = yaw_vel
         req = WaypointService.Request()
+        req.action = action
         req.waypoint = waypoint
         self.future = self.waypoint_client.call_async(req)
         #rclpy.spin_until_future_complete(self, self.future)
