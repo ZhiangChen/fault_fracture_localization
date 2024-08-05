@@ -17,7 +17,7 @@ from scipy.spatial.transform import Rotation
 
 class StateMachine(Node):
     def __init__(self):
-        super().__init__("statemachine")
+        super().__init__("state_machine")
 
         # QOS profiles
         qos_best_effort_profile = QoSProfile(
@@ -51,7 +51,6 @@ class StateMachine(Node):
         self.branch_points = [] # Points where fault branches exist on the fault
 
         # State machine
-        super().__init__("statemachine")
         states = ["idle", # UAV is in pretakeoff, unarmed and is currently not doing anything
                   "initiation", # Initiation procedure where user inputs information is taking place, UAV is still unarmed
                   "takeoff", # UAV is arming and taking off, and reaching a predetermined hover distance
@@ -81,6 +80,7 @@ class StateMachine(Node):
 
     def on_enter_takeoff(self):
         self.waypoint_request("takeoff", 0., 0., -100., 0., 0., 0.)
+        self.waypoint_request("follow", 0., 0., -100., 0., 0., 0.)
 
     
     def on_enter_startup(self):
@@ -152,7 +152,14 @@ class StateMachine(Node):
 
 
     def timer_callback(self):
-        self.waypoint_request(5.,5.,5.,5.,5.,5.,5.,5.)
+        if (self.time == 100):
+            self.waypoint_request("takeoff", 0., 0., -50., 0., 0.,0.,0.,0.)
+            self.waypoint_request("tracking", 0., 0., -50., 0., 5.,5.,5.,0.)
+            self.waypoint_request("tracking", 50., 50., -20., 0., 5.,5.,5.,0.)
+            self.waypoint_request("tracking", 50., 0., -40., 0., 5.,5.,5.,0.)
+            self.waypoint_request("tracking", 25., 25., -20., 0., 5.,5.,5.,0.)
+            self.waypoint_request("tracking", 0., 0., -20., 0., 5.,5.,5.,0.)
+
         self.time += 1
 
 
