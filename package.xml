@@ -6,12 +6,15 @@
   <description>UAV based approach to fracture damage detection</description>
   <maintainer email="frank@caltech.edu">Frank Xiao</maintainer>
   <license>Apache 2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>std_msgs</depend>
+  <depend>rosidl_default_runtime</depend>
+  <depend>rosidl_default_generators</depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>px4_msgs</exec_depend>
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>ultralytics</exec_depend>
-  <exec_depend>custom_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
@@ -19,6 +22,7 @@
   <test_depend>python3-pytest</test_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
+  <member_of_group>rosidl_interface_packages</member_of_group>
 </package>
