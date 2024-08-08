@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import rclpy
+import time
 from rclpy.node import Node
 from rclpy.clock import Clock
 from fault_fracture_localization.srv._waypoint_service import WaypointService
@@ -36,7 +37,7 @@ class StateMachine(Node):
         self.heatmap_subscriber = self.create_subscription(Image, "heatmap", self.heatmap_callback, 10, callback_group=heatmap_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
         # Clients
-        self.waypoint_client = self.create_client(WaypointService, "waypoint")
+        self.waypoint_client = self.create_client(WaypointService, "waypoints")
         while not self.waypoint_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info("waypoint service not availible, retrying")
 
@@ -49,6 +50,9 @@ class StateMachine(Node):
         self.uav_pose_cache = deque(maxlen=200)
         self.initial_pose = None # Where the UAV takes off and will return to
         self.branch_points = [] # Points where fault branches exist on the fault
+
+        # Path Planning 
+        self.waypoint_queue = [] # Queue of waypoints since we publish in batches of 4
 
         # State machine
         states = ["idle", # UAV is in pretakeoff, unarmed and is currently not doing anything
@@ -138,10 +142,21 @@ class StateMachine(Node):
         waypoint.velocity_y = y_vel
         waypoint.velocity_z = z_vel
         waypoint.velocity_yaw = yaw_vel
-        req = WaypointService.Request()
-        req.action = action
-        req.waypoint = waypoint
-        self.future = self.waypoint_client.call_async(req)
+        if action == "takeoff":
+            req = WaypointService.Request()
+            req.action = action
+            req.waypoints = [waypoint]
+            self.future = self.waypoint_client.call_async(req)
+            self.waypoint_queue.clear()
+
+        else:
+            self.waypoint_queue.append(waypoint)
+            if len(self.waypoint_queue) == 4:
+                req = WaypointService.Request()
+                req.action = action
+                req.waypoints = self.waypoint_queue
+                self.future = self.waypoint_client.call_async(req)
+                self.waypoint_queue.clear()
         #rclpy.spin_until_future_complete(self, self.future)
         #return self.future.result()
 
@@ -154,11 +169,19 @@ class StateMachine(Node):
     def timer_callback(self):
         if (self.time == 100):
             self.waypoint_request("takeoff", 0., 0., -50., 0., 0.,0.,0.,0.)
-            self.waypoint_request("tracking", 0., 0., -50., 0., 5.,5.,5.,0.)
-            self.waypoint_request("tracking", 50., 50., -20., 0., 5.,5.,5.,0.)
-            self.waypoint_request("tracking", 50., 0., -40., 0., 5.,5.,5.,0.)
-            self.waypoint_request("tracking", 25., 25., -20., 0., 5.,5.,5.,0.)
-            self.waypoint_request("tracking", 0., 0., -20., 0., 5.,5.,5.,0.)
+            time.sleep(10)
+            self.waypoint_request("waypoints", 0., 0., -50., 0., 0.,0.,0.,0.)
+            self.waypoint_request("waypoints", 50., 50., -20., 0., 8.,8.,0.,0.)
+            self.waypoint_request("waypoints", 50., 0., -40., 0., 8.,8.,0.,0.)
+            self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
+            #time.sleep(10)
+            #pose = self.uav_pose_cache[-1][0]
+            #position = pose.position
+            #self.waypoint_request("waypoints", position.x, position.y, position.z, 0., 10.,10.,5.,0.)
+            #self.waypoint_request("waypoints", 25., -25., -20., 0., 10.,10.,5.,0.)
+            #self.waypoint_request("waypoints", 50., 0., -40., 0., 10.,10.,5.,0.)
+            #self.waypoint_request("waypoints", 25., 25., -20., 0., 10.,10.,10.,0.)
+            #self.waypoint_request("tracking", 0., 0., -20., 0., 5.,5.,5.,0.)
 
         self.time += 1
 

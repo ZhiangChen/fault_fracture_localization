@@ -16,6 +16,8 @@ from nav_msgs.msg import Path
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
 from px4_msgs.msg import VehicleCommand, VehicleStatus, VehicleOdometry
+from std_msgs.msg import String
+import time as time
 
 class PID:
     def __init__(self, Kp, Ki, Kd, integral_window_size=500):
@@ -62,144 +64,6 @@ class PID:
         self.integral_errors.clear()
         self.previous_error = 0
 
-class TrajectoryGenerator:
-    def __init__(self, node):
-        self.waypoints = deque()
-        self.current_path = []
-        self.broadcast_speed = 100 # new point publishing speed in Hz
-        self.node = node # TODO only for debug purposes, remove later
-
-    def is_same(self, point1, point2):
-        return round(point1.x) == round(point2.x) and round(point1.y) == round(point2.y) and round(point1.z) == round(point2.z) and round(point1.yaw) == round(point2.yaw)
-
-    def add_waypoint(self, waypoint):
-        """
-        Adds a waypoint to the path
-
-        Parameters: 
-        waypoint (Waypoint): The waypoint to add to the path
-        """
-        self.node.get_logger().info("new waypoint recieved!")
-        if len(self.waypoints) == 0 or not self.is_same(self.waypoints[-1], waypoint):
-            self.waypoints.append(waypoint)
-
-
-    def generate_path(self):
-        """
-        Generates a B-spline path which interpolates all current waypoints on the path
-
-        Returns:
-        numpy.ndarray: Array of Waypoint objects indicating the sequence of points that should be broadcast at the given Hertz,
-                        None if interpolation cannot be performed
-        """
-        if len(self.waypoints) <= 3:
-            return None
-
-        x = [i.x for i in self.waypoints]
-        y = [i.y for i in self.waypoints]
-        z = [i.z for i in self.waypoints]
-        yaw = [i.yaw for i in self.waypoints]
-        tck, u = interpolate.splprep([x, y ,z, yaw], s = 0)
-        points = np.linspace(0, 1, num=int(10000 * len(u))) 
-        spline = interpolate.splev(points, tck, ext=3)
-        
-        #roughly calculate the length of the spline
-
-        diff = np.diff(spline, axis=1)
-        squared_distances = np.sum(diff**2, axis=0)
-        distance = np.sum(np.sqrt(squared_distances))
-
-        current_speed = np.linalg.norm(self.node.velocity)
-        max_speed = np.linalg.norm([self.waypoints[0].velocity_x, self.waypoints[0].velocity_y, self.waypoints[0].velocity_z])
-        uav_speed = (current_speed + max_speed) / 2.
-        
-        #uav_speed = 10
-
-        # TODO: hack
-        if (uav_speed == 0):
-            uav_speed = 10
-
-        num_points = distance / uav_speed * self.broadcast_speed
-        '''
-        x_time = (self.waypoints[1].x - self.waypoints[0].x / self.waypoints[0].velocity_x)
-        y_time = (self.waypoints[1].y - self.waypoints[0].y / self.waypoints[0].velocity_z)
-        z_time = (self.waypoints[1].z - self.waypoints[0].z / self.waypoints[0].velocity_y)
-        time = max(x_time, max(y_time, z_time))
-        num_points = time * self.broadcast_speed
-        '''
-        new_points = np.linspace(0, 1, num=int(num_points) * 2) 
-        spline = interpolate.splev(new_points, tck, ext=3)
-        actual = deque()
-        debug = [] #DEBUG PURPOSES ONLY
-        for i in range(len(spline[0])):
-            t = Waypoint()
-            t.x = spline[0][i]
-            t.y = spline[1][i]
-            t.z = spline[2][i]
-            t.yaw =  spline[3][i]
-
-            actual.append(t)
-            '''path debug
-            pose = Pose()
-            pose.position.x = t.x
-            pose.position.y = t.y
-            pose.position.z = t.z
-            pose.orientation.w = 0.
-            pose.orientation.x = 0.
-            pose.orientation.y = 0.
-            pose.orientation.z = 0.
-            posestamped = PoseStamped()
-            posestamped.pose = pose
-            #posestamped.header.stamp = self.node.get_clock().now().nanoseconds
-            posestamped.header.frame_id = "uav"
-            debug.append(posestamped)
-                '''
-
-        path = Path()
-        path.poses = debug
-        #path.header.stamp=self.node-.get_clock().now().nanoseconds
-        path.header.frame_id = "uav"
-        self.node.path_publisher.publish(path)
-
-        return actual
-    
-    def next_point(self):
-        """
-        Gets the next point that should be broadcast
-
-        Returns:
-        Waypoint: Waypoint object of the next point to be broadcast, None if there are no more points
-        """
-        if len(self.current_path) < 1:
-            new_path = self.generate_path()
-            if new_path is not None:
-                self.current_path = new_path
-            else:
-                return None
-        if len(self.waypoints) > 1 and self.is_same(self.current_path[0], self.waypoints[1]):
-            self.node.get_logger().info("point removed!")
-            self.waypoints.popleft()
-            new_path = self.generate_path()
-            if new_path is not None:
-                self.current_path = new_path
-
-        next = self.current_path.popleft()
-
-        if (len(self.current_path) > 0):
-            next.velocity_x = (self.current_path[0].x - next.x) / (1 / self.broadcast_speed)
-            next.velocity_y = (self.current_path[0].y - next.y) / (1 / self.broadcast_speed)
-            next.velocity_z = (self.current_path[0].z - next.z) / (1 / self.broadcast_speed)
-            next.velocity_yaw =  (self.current_path[0].yaw - next.yaw) / (1 / self.broadcast_speed)
-        else:
-            next.velocity_x = 0.
-            next.velocity_y = 0.
-            next.velocity_z = 0.
-            next.velocity_yaw = 0.
-        #self.node.get_logger().info("next point at " + str(next.x) + " " +  str(next.y) + " " + str(next.z))
-        return next
-        
-        
-
 
 class OffboardControl(Node):
 
@@ -225,30 +89,32 @@ class OffboardControl(Node):
         self.offboard_mode_publisher = self.create_publisher(OffboardControlMode, "/fmu/in/offboard_control_mode", 10)
         self.trajectory_publisher = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 10)
         self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
-        self.path_publisher = self.create_publisher(Path, "path", 10)
+        #self.path_publisher = self.create_publisher(Path, "path", 10)
+        self.path_status_publisher = self.create_publisher(String, "path_status", 10)
 
         # Services
-        self.waypoint_service = self.create_service(WaypointService, "waypoint", self.waypoint_callback)
+        self.waypoint_service = self.create_service(WaypointService, "waypoints", self.waypoint_callback)
 
         # PID
-        self.pid_x = PID(1., 0.00, 0.01)
-        self.pid_y = PID(1., 0.00, 0.01)
-        self.pid_z = PID(1., 0.00, 0.01)
+        self.pid_x = PID(2., 0.08, 0.01)
+        self.pid_y = PID(2., 0.08, 0.01)
+        self.pid_z = PID(2., 0.00, 0.01)
         self.pid_yaw = PID(2.0, 0.0, 0.0)
 
-        # Path planning
-        self.uav_pose_cache = deque(maxlen=500)
-        self.last_update = self.get_clock().now().nanoseconds
-        self.trajectory_generator = TrajectoryGenerator(self)
-        self.distance_threshold = 5 # distance we are next to waypoint by before switching to next waypoint
-        self.mode = "idle" # governs when we takeoff
-        self.desired_height = 100 # Governs the UAV's takeoff height and where it will default to hovering
-        self.time = 0
-        self.velocity = []
-        timer_period = .01
-        self.timer_ = self.create_timer(timer_period, self.timer_callback, callback_group=timer_callback_group)
+        # timer callback
+        self.control_rate = 100
+        self.sampling_duration = 1.0 / self.control_rate
+        self.timer_ = self.create_timer(self.sampling_duration, self.timer_callback, callback_group=timer_callback_group)
+        
+        # Variables
+        self.uav_pose = None
+        self.path = []
+        self.path_velocity = []
+        self.mode = "init"
+        self.arm_status = False
 
-
+        #DEBUG
+        self.boolarmed = False
 
     def arm(self):
         """
@@ -285,94 +151,6 @@ class OffboardControl(Node):
         msg.timestamp = int(Clock().now().nanoseconds / 1000) # time in microseconds
         self.vehicle_command_publisher_.publish(msg)
 
-    def publish_trajectory_command(self, action, x, y, z, yaw):
-        """
-        Publishes desired velocities to PX4 via the TrajectorySetpoint message
-
-        Parameters:
-        x (float): The desired x velocity of the drone
-        y (float): The desired y velocity of the drone
-        z (float): The desired z velocity of the drone
-        yaw (float): The desired yaw velocity of the drone
-        """
-        msg = TrajectorySetpoint()
-        msg.timestamp = int(Clock().now().nanoseconds / 1000)
-        if (action == "velocity"): 
-            msg.position = [float('nan'), float('nan'), float('nan')]
-            msg.velocity = [x, y, z]
-            msg.acceleration = [float('nan'), float('nan'), float('nan')]
-            #msg.yawspeed = yaw
-        elif (action == "position"):
-            msg.position = [x, y, z]
-            msg.velocity = [float('nan'), float('nan'), float('nan')]
-            msg.acceleration = [float('nan'), float('nan'), float('nan')]
-            msg.yaw = yaw
-        self.trajectory_publisher.publish(msg)
-
-    def uav_pose_to_string(self, uav_pose):
-        """
-        Generates string of uav pose for debugging purposes
-
-        Parameters:
-        uav_pose (Pose): The pose of the uav to be turned into a string
-
-        Returns:
-        String: The pose as a string
-        """
-
-        first = "POSITION: " + str(uav_pose.position.x) + " " + str(uav_pose.position.y) + " " + str(uav_pose.position.z) + " \n"
-        second = "ORIENTATION " + str(uav_pose.orientation.x) + " " + str(uav_pose.orientation.y) + " " + str(uav_pose.orientation.z) + " " + str(uav_pose.orientation.w) 
-        return first + second
-
-
-    def uav_pose_callback(self, msg):
-        """
-        Callback function for VehicleOdometry subscription. Adds current pose and timestamp
-        to cache.
-
-        Parameters:
-        msg (VehicleOdometry): A VehicleOdometry message published by PX4
-
-        """
-        uav_pose = Pose()
-        uav_pose.position.x = float(msg.position[0])
-        uav_pose.position.y = float(msg.position[1])
-        uav_pose.position.z = float(msg.position[2])
-        uav_pose.orientation.x = float(msg.q[0])
-        uav_pose.orientation.y = float(msg.q[1])
-        uav_pose.orientation.z = float(msg.q[2])
-        uav_pose.orientation.w = float(msg.q[3])
-        #self.get_logger().info(self.uav_pose_to_string(uav_pose))
-        self.uav_pose_cache.append((uav_pose, msg.timestamp))
-
-        self.velocity = msg.velocity
-
-    def vehicle_status_callback(self, data):
-        """Callback function for VehicleStatus subscription. Function currently TODO"""
-        # TODO
-        pass
-
-    def waypoint_callback(self, request, response):
-        """
-        Acknowledges a waypoint service call and appends the waypoint to the queue 
-
-        Parameters:
-        request (Waypoint): Part of the WaypointService server message. The point to add to the UAV path
-        response (Bool): Part of the WaypointService server message. Boolean acknowleging if message was recieved
-        
-        Returns:
-        Bool: indiciation if the message was recieved
-        """
-        if (request.action == "takeoff"):
-            self.mode = "takeoff"
-            self.desired_height = request.waypoint.z
-
-            self.get_logger().info("takeoff acknowleged")
-        else:
-            self.trajectory_generator.add_waypoint(request.waypoint)
-        response.ack = True
-        return response
-
     def publish_offboard_mode(self, mode):
         """
         Publishes a PX4 OffboardControl message that indicates the mode the UAV is flying in
@@ -391,71 +169,288 @@ class OffboardControl(Node):
             msg.acceleration = False
         self.offboard_mode_publisher.publish(msg)
 
-    def uav_takeoff(self, height):
+    def vehicle_status_callback(self, msg):
         """
-        Initiates the sequence needed for the UAV to takeoff and hover at a specified height
+        Callback function for the vehicle status subscriber
         """
+        if msg.arming_state == 2:
+            self.arm_status = True
+        else:
+            self.arm_status = False
 
+    def uav_pose_callback(self, msg):
+        """
+        Callback function for the UAV pose subscriber
+        """
+        self.uav_pose = msg
+
+    def waypoint_callback(self, request, response):
+        """
+        Callback function for the waypoint service
+        """
+        if (request.action == "takeoff"):
+            self.mode = "takeoff"
+            self.path = [[request.waypoints[0].x, request.waypoints[0].y, request.waypoints[0].z, request.waypoints[0].yaw]]
+            self.get_logger().info("Received position request")
+            response.ack = True
+        elif (request.action == "position"):
+            self.mode = "position"
+            self.path = [[request.waypoints[0].x, request.waypoints[0].y, request.waypoints[0].z, request.waypoints[0].yaw]]
+            self.get_logger().info("Received position request")
+            response.ack = True
+        elif (request.action == "waypoints"):
+            self.mode = "waypoints"
+            self.get_logger().info("Received path request")
+            waypoints = request.waypoints
+            # TODO: if two sequential waypoints are the same, response false
+            self.path, self.path_velocity = self.generate_path_cubic(waypoints, 3.0)
+            self.get_logger().info("Path generated")
+            self.get_logger().info(str(len(self.path)))
+            response.ack = True
+        else:
+            self.get_logger().info("Invalid request")
+            response.ack = False
+
+        return response
+
+    def solver(self, initial_position, initial_velocity, final_position, final_velocity, time):
+        matrix = np.array([[0,0,0,1],
+                           [0,0,1,0],
+                           [time ** 3, time ** 2, time, 1],
+                           [3 * (time ** 2), 2 * time, 1 , 0]])
+        knowns = np.array([initial_position, initial_velocity, final_position, final_velocity])
+        return np.matmul(np.linalg.inv(matrix), knowns)
+
+    def determine_time(self, time_lower_bound, time_upper_bound, min_accel, initial_position, initial_velocity, final_position, final_velocity, max_iter = 100):
+        l = time_lower_bound - 1
+        r = time_upper_bound + 1
+        iter = 0
+        while (True):
+            iter += 1
+            m = l + (r - l) / 2
+            params = self.solver(initial_position, initial_velocity, final_position, final_velocity, m)
+            max_accel = max(abs(6 * params[0] * m + 2 * params[1]), abs(2 * params[1]))
+            if (max_accel > min_accel):
+                l = m
+            else:
+                r = m
+            if abs(max_accel - min_accel) < .1 or iter > max_iter :
+                print(max_accel)
+                break
+        return r
+
+
+    def generate_path_cubic(self, waypoints, target_accel):
+        path = []
+        path_velocity = []
+        for i in range(len(waypoints) - 1):
+            x_time = self.determine_time(1, 1000, target_accel, waypoints[i].x, waypoints[i].velocity_x, waypoints[i + 1].x, waypoints[i + 1].velocity_x)
+            y_time = self.determine_time(1, 1000, target_accel, waypoints[i].y, waypoints[i].velocity_y, waypoints[i + 1].y, waypoints[i + 1].velocity_y)
+            z_time = self.determine_time(1, 1000, target_accel, waypoints[i].z, waypoints[i].velocity_z, waypoints[i + 1].z, waypoints[i + 1].velocity_z)
+            yaw_time = self.determine_time(1, 1000, target_accel, waypoints[i].yaw, waypoints[i].velocity_yaw, waypoints[i + 1].yaw, waypoints[i + 1].velocity_yaw)
+            time = max(x_time, y_time, z_time, yaw_time)
+            x_param = self.solver(waypoints[i].x, waypoints[i].velocity_x, waypoints[i + 1].x, waypoints[i + 1].velocity_x, time)
+            y_param = self.solver(waypoints[i].y, waypoints[i].velocity_y, waypoints[i + 1].y, waypoints[i + 1].velocity_y, time)
+            z_param = self.solver(waypoints[i].z, waypoints[i].velocity_z, waypoints[i + 1].z, waypoints[i + 1].velocity_z, time)
+            yaw_param = self.solver(waypoints[i].yaw, waypoints[i].velocity_yaw, waypoints[i + 1].yaw, waypoints[i + 1].velocity_yaw, time)
+            mesh = np.linspace(0, time, int(time * self.control_rate)) 
+            x_pos = x_param[0] * mesh ** 3 + x_param[1] * mesh ** 2 + x_param[2] * mesh + x_param[3]
+            y_pos = y_param[0] * mesh ** 3 + y_param[1] * mesh ** 2 + y_param[2] * mesh + y_param[3]
+            z_pos = z_param[0] * mesh ** 3 + z_param[1] * mesh ** 2 + z_param[2] * mesh + z_param[3]
+            yaw_pos = yaw_param[0] * mesh ** 3 + yaw_param[1] * mesh ** 2 + yaw_param[2] * mesh + yaw_param[3]
+
+            x_vel = x_param[0] * 3 * mesh ** 2 + x_param[1] * 2 * mesh + x_param[2] 
+            y_vel = y_param[0] * 3 * mesh ** 2 + y_param[1] * 2 * mesh + y_param[2] 
+            z_vel = z_param[0] * 3 * mesh ** 2 + z_param[1] * 2 * mesh + z_param[2] 
+            yaw_vel = yaw_param[0] * 3 * mesh ** 2 + yaw_param[1] * 2 * mesh + yaw_param[2] 
+
+            path.extend([[x_pos[i], y_pos[i], z_pos[i], yaw_pos[i]] for i in range(len(x_pos))])  
+            path_velocity.extend([[x_vel[i], y_vel[i], z_vel[i], yaw_vel[i]] for i in range(len(x_vel))])
+
+
+        return path, path_velocity
+
+
+
+    
+    
+
+
+
+    def generate_path_bspline(self, waypoints):
+        """
+        Generates a B-spline path which interpolates all current waypoints on the path
+
+        Returns:
+        numpy.ndarray: Array of Waypoint objects indicating the sequence of points that should be broadcast at the given Hertz,
+                        None if interpolation cannot be performed
+        """
+        if len(waypoints) != 4:
+            return None
+        
+        x = [i.x for i in waypoints]
+        y = [i.y for i in waypoints]
+        z = [i.z for i in waypoints]
+        yaw = [i.yaw for i in waypoints]
+        self.get_logger().info(str(len(x)))
+        tck, u = interpolate.splprep([x, y , z, yaw], s = 0)
+        # Interpolating the spline
+        sampling_points = np.linspace(0, 1, num=int(self.control_rate * len(u)))
+        spline = interpolate.splev(sampling_points, tck, ext=3)
+
+        # calculate the velocity of the UAV at each point in tau space
+        velocity_x = np.gradient(spline[0], sampling_points)
+        velocity_y = np.gradient(spline[1], sampling_points)
+        velocity_z = np.gradient(spline[2], sampling_points)
+        velocity_yaw = np.gradient(spline[3], sampling_points)
+
+        # get the absolute max velocity of the UAV
+        max_velocity_x = max(abs(max(velocity_x)), abs(min(velocity_x)))
+        max_velocity_y = max(abs(max(velocity_y)), abs(min(velocity_y)))
+        max_velocity_z = max(abs(max(velocity_z)), abs(min(velocity_z)))
+        max_velocity_yaw = max(abs(max(velocity_yaw)), abs(min(velocity_yaw)))
+
+        # get the scaling factor for the velocity
+        scaling_factor_x = max_velocity_x / waypoints[0].velocity_x
+        scaling_factor_y = max_velocity_y / waypoints[0].velocity_y 
+        scaling_factor_z = max_velocity_z / waypoints[0].velocity_z 
+        scaling_factor_yaw = max_velocity_yaw / waypoints[0].velocity_yaw 
+        self.get_logger().info("x scaling factor " + str(scaling_factor_x))
+        self.get_logger().info("y scaling factor " + str(scaling_factor_y))
+        self.get_logger().info("z scaling factor " + str(scaling_factor_z))
+        self.get_logger().info("yaw scaling factor " + str(scaling_factor_yaw))
+        scaling_factor = max(scaling_factor_x, scaling_factor_y, scaling_factor_z, scaling_factor_yaw)
+        self.get_logger().info("scaling factor " + str(scaling_factor))
+
+        # resampling the spline with the new velocity scaling factor
+        sampling_points = np.linspace(0, 1, num=int(self.control_rate * scaling_factor))
+        spline = interpolate.splev(sampling_points, tck, ext=3)
+
+        # generate the path from spline
+        path = [[spline[0][i], spline[1][i], spline[2][i], spline[3][i]] for i in range(len(spline[0]))]
+
+        return path
+    
+    def publish_trajectory_command(self, action, x, y, z, yaw):
+        """
+        Publishes desired velocities to PX4 via the TrajectorySetpoint message
+
+        Parameters:
+        x (float): The desired x velocity/position of the drone
+        y (float): The desired y velocity/position of the drone
+        z (float): The desired z velocity/position of the drone
+        yaw (float): The desired yaw velocity/angle of the drone
+        """
+        msg = TrajectorySetpoint()
+        msg.timestamp = int(Clock().now().nanoseconds / 1000)
+        if (action == "velocity"): 
+            msg.position = [float('nan'), float('nan'), float('nan')]
+            msg.velocity = [x, y, z]
+            msg.acceleration = [float('nan'), float('nan'), float('nan')]
+            #msg.yawspeed = yaw
+        elif (action == "position"):
+            msg.position = [x, y, z]
+            msg.velocity = [float('nan'), float('nan'), float('nan')]
+            msg.acceleration = [float('nan'), float('nan'), float('nan')]
+            msg.yaw = yaw
+        self.trajectory_publisher.publish(msg)
+    
     def timer_callback(self):
         """
-        Callback for the timer and the main loop. Controls interfacing with drone movement
+        Timer callback function
         """
-        if (len(self.uav_pose_cache) < 1):
+        if self.uav_pose is None:
             return
-        uav_pose = self.uav_pose_cache[-1][0]
-        orientation = uav_pose.orientation
-        position = uav_pose.position
-        current_time = self.get_clock().now().nanoseconds
-        dt = (current_time - self.last_update) / 10000000 # to seconds
-        self.last_update = current_time
-        if (self.mode == "takeoff"):
+        position = self.uav_pose.position
+        orientation = self.uav_pose.q
+        heading = Rotation.from_quat([orientation[3], orientation[0], orientation[1], orientation[2]]).as_euler('zyx')
+
+        if self.mode == "takeoff":
             self.publish_offboard_mode("position")
-            if (self.time == 250):
-                self.get_logger().info("initing")
-                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+            # if the UAV is not armed, arm it
+            if not self.arm_status:
+                self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0) # Set to offboard mode
                 self.arm()
-            elif (abs(position.z - self.desired_height) < 2): # arbitrary tolerance, will probably make a constant later
-                self.get_logger().info("switching to tracking")
-                self.mode = "tracking"
-                position = self.uav_pose_cache[-1][0].position
-                orientation = self.uav_pose_cache[-1][0].orientation
-                init = Waypoint()
-                init.x = position.x
-                init.y = position.y
-                init.z = position.z
-                heading = Rotation.from_quat([orientation.w, orientation.x, orientation.y, orientation.z]).as_euler('zyx')
-                init.yaw = heading[0]
-                self.trajectory_generator.add_waypoint(init)
-            elif (self.time > 250):
-                #self.get_logger().info(str(position.x) + " " + str(self.desired_height))
-                self.publish_trajectory_command("position", position.x , position.y, self.desired_height, 0.)
+            
+            x = self.path[0][0]
+            y = self.path[0][1]
+            z = self.path[0][2]
+            yaw = self.path[0][3]
+            self.publish_trajectory_command("position", x, y, z, yaw)
 
+            # check if the UAV has reached the desired position
+            current_position = np.array([position[0], position[1], position[2]])
+            desired_position = np.array([x, y, z])
+            distance = np.linalg.norm(current_position - desired_position)
+            yaw_diff = abs(heading[0] - yaw)
+            if distance < 0.1 and yaw_diff < 0.1:
+                self.mode = "position"
+                self.get_logger().info("Takeoff completed")
+                # TODO: inform state machine that takeoff is completed
 
-            self.time += 1
+        elif self.mode == "position":
+            self.publish_offboard_mode("position")
+            x = self.path[0][0]
+            y = self.path[0][1]
+            z = self.path[0][2]
+            yaw = self.path[0][3]
+            self.publish_trajectory_command("position", x, y, z, yaw)
 
-        else:
-            next_point = self.trajectory_generator.next_point()
-            if next_point is None:
-                self.publish_offboard_mode("position")
-                #self.get_logger().info("No next point recieved!")
-                heading = Rotation.from_quat([orientation.w, orientation.x, orientation.y, orientation.z]).as_euler('zyx')
-                self.publish_trajectory_command("position", position.x, position.y, position.z, 0.)
+        elif self.mode == "waypoints":
+            self.publish_offboard_mode("velocity")
+            if len(self.path) < 2:
+                #self.get_logger().info("Path completed")
+                # TODO: inform state machine that path is completed
+                x_velocity_cmd = 0.
+                y_velocity_cmd = 0.
+                z_velocity_cmd = 0.
+                yaw_velocity_cmd = 0.
+                self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
+            
             else:
-                self.publish_offboard_mode("velocity")
-                current_heading = Rotation.from_quat([orientation.w, orientation.x, orientation.y, orientation.z]).as_euler('zyx')
-                x_vel = self.pid_x.update(position.x, next_point.x, dt) + next_point.velocity_x
-                y_vel = self.pid_y.update(position.y, next_point.y, dt) + next_point.velocity_y
-                z_vel = self.pid_z.update(position.z + 6, next_point.z, dt) + next_point.velocity_z
-                #self.get_logger().info('vel x: ' + str(x_vel))
-                #self.get_logger().info('vel y: ' + str(y_vel))
-                #self.get_logger().info('vel z: ' + str(z_vel))
-                self.get_logger().info('pose x: ' + str(uav_pose.position.x) + " next x: " + str(next_point.x))
-                self.get_logger().info('pose y: ' + str(uav_pose.position.y) + " next y: " + str(next_point.y))
-                self.get_logger().info('pose z: ' + str(uav_pose.position.z + 4) + " next z: " + str(next_point.z))
-                self.get_logger().info("current pid: " + str(x_vel) + " "+ str(y_vel) + " "+ str(z_vel) + " ")
-                yaw_vel = self.pid_yaw.update(current_heading[0], next_point.yaw, dt) + next_point.velocity_yaw
-                self.publish_trajectory_command("velocity", x_vel , y_vel, z_vel, yaw_vel)
+                # the first waypoint in the path 
+                x = self.path[0][0]
+                y = self.path[0][1]
+                z = self.path[0][2]
+                yaw = self.path[0][3]
 
+                '''
+                # calculate desired velocity in the path
+                x_next = self.path[1][0]
+                y_next = self.path[1][1]
+                z_next = self.path[1][2]
+                yaw_next = self.path[1][3]
+                x_velocity = (x_next - x) / self.sampling_duration
+                y_velocity = (y_next - y) / self.sampling_duration
+                z_velocity = (z_next - z) / self.sampling_duration
+                yaw_velocity = (yaw_next - yaw) / self.sampling_duration
+                '''
+                x_velocity = self.path_velocity[0][0]
+                y_velocity = self.path_velocity[0][1]
+                z_velocity = self.path_velocity[0][2]
+                yaw_velocity = self.path_velocity[0][3]
+                self.get_logger().info('pose x: ' + str(position[0]) + " next x: " + str(x))
+                self.get_logger().info('pose y: ' + str(position[1]) + " next y: " + str(y))
+                self.get_logger().info('pose z: ' + str(position[2] + 4) + " next z: " + str(z))
+
+                # pop the first waypoint from the path
+                self.path.pop(0)
+                self.path_velocity.pop(0)
+
+                # calculate velocity commands from PID 
+                x_velocity_cmd = self.pid_x.update(position[0], x, 1/self.control_rate) + x_velocity
+                y_velocity_cmd = self.pid_y.update(position[1], y, 1/self.control_rate) + y_velocity
+                z_velocity_cmd = self.pid_z.update(position[2] + 4, z, 1/self.control_rate) + z_velocity
+                yaw_velocity_cmd = self.pid_yaw.update(heading[0], yaw, 1/self.control_rate) + yaw_velocity
+                self.get_logger().info("velocity published: " + str(x_velocity_cmd) + " " + str(y_velocity_cmd) + " " + str(z_velocity_cmd))
+
+                # publish the velocity commands
+                self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
+                
+
+
+        
+            
 def main(args = None):
     rclpy.init(args=args)
     offboard_control = OffboardControl()
@@ -469,5 +464,3 @@ def main(args = None):
 
 if __name__ == "__main__":
     main()
-
-

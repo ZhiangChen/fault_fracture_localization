@@ -1,5 +1,5 @@
 string action
-Waypoint waypoint
+Waypoint[] waypoints
 ---
 bool ack
 
