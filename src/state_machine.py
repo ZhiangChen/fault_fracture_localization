@@ -47,7 +47,7 @@ class StateMachine(Node):
         self.time = 0
 
         # UAV data 
-        self.uav_pose_cache = deque(maxlen=200)
+        self.uav_pose = None # Current UAV Pose
         self.initial_pose = None # Where the UAV takes off and will return to
         self.branch_points = [] # Points where fault branches exist on the fault
 
@@ -120,28 +120,35 @@ class StateMachine(Node):
         msg (VehicleOdometry): A VehicleOdometry message published by PX4
 
         """
-        uav_pose = Pose()
-        uav_pose.position.x = float(msg.position[0])
-        uav_pose.position.y = float(msg.position[1])
-        uav_pose.position.z = float(msg.position[2])
-        uav_pose.orientation.x = float(msg.q[0])
-        uav_pose.orientation.y = float(msg.q[1])
-        uav_pose.orientation.z = float(msg.q[2])
-        uav_pose.orientation.w = float(msg.q[3])
-        #self.get_logger().info(self.uav_pose_to_string(uav_pose))
-        self.uav_pose_cache.append((uav_pose, msg.timestamp))
+        self.uav_pose = msg
 
-    def waypoint_request(self, action, x, y , z, yaw, x_vel, y_vel, z_vel, yaw_vel):
+    def waypoint_request(self, action, x, y, z, yaw, x_vel, y_vel, z_vel, yaw_vel):
+        """
+        Sends a waypoint for the UAV to travel to. Waypoint requests will be held on to until the batch number has been
+        reached, in which a request will be sent to the WaypointService client
+
+        Parameters:
+        action (String): The action that should be taken at the waypoint, such as hover, takeoff, etc
+        x (float): the x coordinate that the UAV should take on at this waypoint
+        y (float): the y coordinate that the UAV should take on at this waypoint
+        z (float): the z coordinate that the UAV should take on at this waypoint
+        yaw (float): the yaw coordinate that the UAV should take on at this waypoint
+        x_vel (float): the velocity in the x direction the UAV should be travelling at when it reaches this waypoint
+        y_vel (float): the velocity in the y direction the UAV should be travelling at when it reaches this waypoint
+        z_vel (float): the velocity in the z direction the UAV should be travelling at when it reaches this waypoint
+        yaw_vel (float): the velocity in the yaw direction the UAV should be travelling at when it reaches this waypoint
+
+        """
         waypoint = Waypoint()
         waypoint.timestamp = int(Clock().now().nanoseconds / 1000)
-        waypoint.x = x
-        waypoint.y = y
-        waypoint.z = z
-        waypoint.yaw = yaw
-        waypoint.velocity_x = x_vel
-        waypoint.velocity_y = y_vel
-        waypoint.velocity_z = z_vel
-        waypoint.velocity_yaw = yaw_vel
+        waypoint.x = float(x)
+        waypoint.y = float(y)
+        waypoint.z = float(z)
+        waypoint.yaw = float(yaw)
+        waypoint.velocity_x = float(x_vel)
+        waypoint.velocity_y = float(y_vel)
+        waypoint.velocity_z = float(z_vel)
+        waypoint.velocity_yaw = float(yaw_vel)
         if action == "takeoff":
             req = WaypointService.Request()
             req.action = action
@@ -167,6 +174,8 @@ class StateMachine(Node):
 
 
     def timer_callback(self):
+
+        # Testing Code
         if (self.time == 100):
             self.waypoint_request("takeoff", 0., 0., -50., 0., 0.,0.,0.,0.)
             time.sleep(10)
@@ -174,14 +183,12 @@ class StateMachine(Node):
             self.waypoint_request("waypoints", 50., 50., -20., 0., 8.,8.,0.,0.)
             self.waypoint_request("waypoints", 50., 0., -40., 0., 8.,8.,0.,0.)
             self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
-            #time.sleep(10)
-            #pose = self.uav_pose_cache[-1][0]
-            #position = pose.position
-            #self.waypoint_request("waypoints", position.x, position.y, position.z, 0., 10.,10.,5.,0.)
-            #self.waypoint_request("waypoints", 25., -25., -20., 0., 10.,10.,5.,0.)
-            #self.waypoint_request("waypoints", 50., 0., -40., 0., 10.,10.,5.,0.)
-            #self.waypoint_request("waypoints", 25., 25., -20., 0., 10.,10.,10.,0.)
-            #self.waypoint_request("tracking", 0., 0., -20., 0., 5.,5.,5.,0.)
+            time.sleep(10)
+            self.waypoint_request("waypoints", self.uav_pose.position[0], self.uav_pose.position[1], self.uav_pose.position[2], 0., self.uav_pose.velocity[0],self.uav_pose.velocity[1],self.uav_pose.velocity[2],0.)
+            self.waypoint_request("waypoints", 100., 25., -20., 0., 10.,10.,0.,0.)
+            self.waypoint_request("waypoints", 50., 0., -40., 0., 10.,10.,0.,0.)
+            self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
+            #self.waypoint_request("waypoints", 0., 0., -20., 0., 5.,5.,5.,0.)
 
         self.time += 1
 

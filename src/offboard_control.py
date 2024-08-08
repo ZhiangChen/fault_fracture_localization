@@ -17,7 +17,6 @@ from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
 from px4_msgs.msg import VehicleCommand, VehicleStatus, VehicleOdometry
 from std_msgs.msg import String
-import time as time
 
 class PID:
     def __init__(self, Kp, Ki, Kd, integral_window_size=500):
@@ -213,7 +212,19 @@ class OffboardControl(Node):
 
         return response
 
-    def solver(self, initial_position, initial_velocity, final_position, final_velocity, time):
+    def cubic_solver(self, initial_position, initial_velocity, final_position, final_velocity, time):
+        """
+        Finds the appropriate cubic fit for given parameters on a certain axis
+
+        Parameters:
+        initial_position (float): The initial position of the UAV
+        initial_velocity (float): The initial velocity of the UAV
+        final_position (float): The final position of the UAV
+        final_velocity (float): The final velocity of the UAV
+
+        Returns:
+        np.ndarray: A list of parameters in the order of a, b, c, d where ax^3 + bx^2 + cx + d fits the conditions
+        """
         matrix = np.array([[0,0,0,1],
                            [0,0,1,0],
                            [time ** 3, time ** 2, time, 1],
@@ -222,13 +233,26 @@ class OffboardControl(Node):
         return np.matmul(np.linalg.inv(matrix), knowns)
 
     def determine_time(self, time_lower_bound, time_upper_bound, min_accel, initial_position, initial_velocity, final_position, final_velocity, max_iter = 100):
+        """
+        Determines the least amount of time needed such that the maximum acceleration using the given parameters is the least greater than the acceleration specified
+
+        Parameters:
+        time_lower_bound (int): the lower bound of the amount of time that we will be considering
+        time_upper_bound (int): the upper bound of the amount of time that we will be considering
+        min_accel (float): The minimum acceleration threshold
+        initial_position (float): The initial position of the UAV
+        initial_velocity (float): The initial velocity of the UAV
+        final_position (float): The final position of the UAV
+        final_velocity (float): The final velocity of the UAV
+        max_iter (int): The maximum number of iterations the binary search will go through
+        """
         l = time_lower_bound - 1
         r = time_upper_bound + 1
         iter = 0
         while (True):
             iter += 1
             m = l + (r - l) / 2
-            params = self.solver(initial_position, initial_velocity, final_position, final_velocity, m)
+            params = self.cubic_solver(initial_position, initial_velocity, final_position, final_velocity, m)
             max_accel = max(abs(6 * params[0] * m + 2 * params[1]), abs(2 * params[1]))
             if (max_accel > min_accel):
                 l = m
@@ -241,6 +265,17 @@ class OffboardControl(Node):
 
 
     def generate_path_cubic(self, waypoints, target_accel):
+        """
+        Generate a cubic based piecewise interpolation of the waypoints
+
+        Parameters:
+        waypoints (Waypoint[]): List of waypoints to be interpolated
+        target_accel (float): The target maximum acceleration that the UAV should reach
+
+        Returns:
+        np.ndarray: Array of 4-tuples detailing the x, y, z, and yaw positions along the path. Number of points determined by control_rate
+        np.ndarray: Array of 4-tuples detailing the x, y, z, and yaw velocities along the path. Number of points determined by control_rate
+        """
         path = []
         path_velocity = []
         for i in range(len(waypoints) - 1):
@@ -249,10 +284,10 @@ class OffboardControl(Node):
             z_time = self.determine_time(1, 1000, target_accel, waypoints[i].z, waypoints[i].velocity_z, waypoints[i + 1].z, waypoints[i + 1].velocity_z)
             yaw_time = self.determine_time(1, 1000, target_accel, waypoints[i].yaw, waypoints[i].velocity_yaw, waypoints[i + 1].yaw, waypoints[i + 1].velocity_yaw)
             time = max(x_time, y_time, z_time, yaw_time)
-            x_param = self.solver(waypoints[i].x, waypoints[i].velocity_x, waypoints[i + 1].x, waypoints[i + 1].velocity_x, time)
-            y_param = self.solver(waypoints[i].y, waypoints[i].velocity_y, waypoints[i + 1].y, waypoints[i + 1].velocity_y, time)
-            z_param = self.solver(waypoints[i].z, waypoints[i].velocity_z, waypoints[i + 1].z, waypoints[i + 1].velocity_z, time)
-            yaw_param = self.solver(waypoints[i].yaw, waypoints[i].velocity_yaw, waypoints[i + 1].yaw, waypoints[i + 1].velocity_yaw, time)
+            x_param = self.cubic_solver(waypoints[i].x, waypoints[i].velocity_x, waypoints[i + 1].x, waypoints[i + 1].velocity_x, time)
+            y_param = self.cubic_solver(waypoints[i].y, waypoints[i].velocity_y, waypoints[i + 1].y, waypoints[i + 1].velocity_y, time)
+            z_param = self.cubic_solver(waypoints[i].z, waypoints[i].velocity_z, waypoints[i + 1].z, waypoints[i + 1].velocity_z, time)
+            yaw_param = self.cubic_solver(waypoints[i].yaw, waypoints[i].velocity_yaw, waypoints[i + 1].yaw, waypoints[i + 1].velocity_yaw, time)
             mesh = np.linspace(0, time, int(time * self.control_rate)) 
             x_pos = x_param[0] * mesh ** 3 + x_param[1] * mesh ** 2 + x_param[2] * mesh + x_param[3]
             y_pos = y_param[0] * mesh ** 3 + y_param[1] * mesh ** 2 + y_param[2] * mesh + y_param[3]
@@ -264,17 +299,11 @@ class OffboardControl(Node):
             z_vel = z_param[0] * 3 * mesh ** 2 + z_param[1] * 2 * mesh + z_param[2] 
             yaw_vel = yaw_param[0] * 3 * mesh ** 2 + yaw_param[1] * 2 * mesh + yaw_param[2] 
 
-            path.extend([[x_pos[i], y_pos[i], z_pos[i], yaw_pos[i]] for i in range(len(x_pos))])  
-            path_velocity.extend([[x_vel[i], y_vel[i], z_vel[i], yaw_vel[i]] for i in range(len(x_vel))])
+            path.extend([(x_pos[i], y_pos[i], z_pos[i], yaw_pos[i]) for i in range(len(x_pos))])  
+            path_velocity.extend([(x_vel[i], y_vel[i], z_vel[i], yaw_vel[i]) for i in range(len(x_vel))])
 
 
         return path, path_velocity
-
-
-
-    
-    
-
 
 
     def generate_path_bspline(self, waypoints):
@@ -429,9 +458,6 @@ class OffboardControl(Node):
                 y_velocity = self.path_velocity[0][1]
                 z_velocity = self.path_velocity[0][2]
                 yaw_velocity = self.path_velocity[0][3]
-                self.get_logger().info('pose x: ' + str(position[0]) + " next x: " + str(x))
-                self.get_logger().info('pose y: ' + str(position[1]) + " next y: " + str(y))
-                self.get_logger().info('pose z: ' + str(position[2] + 4) + " next z: " + str(z))
 
                 # pop the first waypoint from the path
                 self.path.pop(0)
@@ -442,15 +468,15 @@ class OffboardControl(Node):
                 y_velocity_cmd = self.pid_y.update(position[1], y, 1/self.control_rate) + y_velocity
                 z_velocity_cmd = self.pid_z.update(position[2] + 4, z, 1/self.control_rate) + z_velocity
                 yaw_velocity_cmd = self.pid_yaw.update(heading[0], yaw, 1/self.control_rate) + yaw_velocity
+                self.get_logger().info('pose x: ' + str(position[0]) + " next x: " + str(x))
+                self.get_logger().info('pose y: ' + str(position[1]) + " next y: " + str(y))
+                self.get_logger().info('pose z: ' + str(position[2] + 4) + " next z: " + str(z))
                 self.get_logger().info("velocity published: " + str(x_velocity_cmd) + " " + str(y_velocity_cmd) + " " + str(z_velocity_cmd))
 
                 # publish the velocity commands
                 self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
                 
 
-
-        
-            
 def main(args = None):
     rclpy.init(args=args)
     offboard_control = OffboardControl()
