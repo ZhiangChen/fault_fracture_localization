@@ -22,6 +22,16 @@ class Perception(Node):
     def __init__(self):
         super().__init__("perception")
 
+        self.declare_parameters(
+            namespace = '',
+            parameters = [
+                ("fx", rclpy.Parameter.Type.DOUBLE),
+                ("fy", rclpy.Parameter.Type.DOUBLE),
+                ("cx", rclpy.Parameter.Type.DOUBLE),
+                ("cy", rclpy.Parameter.Type.DOUBLE),
+                ]
+        )
+
         # QOS profiles
         qos_best_effort_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -46,7 +56,14 @@ class Perception(Node):
         self.uav_pose_cache = deque(maxlen=200)
         self.camera_intrinsic = np.array([[861.923198, 0, 960.0],
                       [0, 980.985917, 540.0],
-                      [0, 0, 1]])  # Hardcoded intrinsic matrix TODO migrate to YAML file
+                      [0, 0, 1]])
+        #self.camera_intrinsic = np.array([[self.get_parameter("fx").value, 0, self.get_parameter("cx").value],
+        #                                  [0, self.get_parameter("fy").value, self.get_parameter("cy").value],
+         #                               [0, 0, 1]])  # Hardcoded intrinsic matrix TODO migrate to YAML file
+        #self.camera_intrinsic = np.array([self.get_parameter("camera_intrinsic.row_one").value,
+        #                                  self.get_parameter("camera_instrisic.row_two").value,
+        #                                  self.get_parameter("camera_instrisic.row_three").value,
+        #                                  ])
         self.bridge = CvBridge()
         self.dem  = self.generate_dem(1000, 500, 1) # TODO replace with actual dem 
         self.sparse_dem = self.generate_dem(1000, 500, 10) # Heatmap used to bound the area needed for actual computation

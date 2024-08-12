@@ -14,11 +14,20 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from transitions import Machine
 from collections import deque
 from scipy.spatial.transform import Rotation
+from std_msgs.msg import Bool
 
 
 class StateMachine(Node):
     def __init__(self):
         super().__init__("state_machine")
+
+        self.declare_parameters(
+            namespace = '',
+            parameters = [
+                    ("takeoff_height", rclpy.Parameter.Type.DOUBLE),
+                ]
+        )
+
 
         # QOS profiles
         qos_best_effort_profile = QoSProfile(
@@ -35,6 +44,7 @@ class StateMachine(Node):
 
         # Subscriptions
         self.heatmap_subscriber = self.create_subscription(Image, "heatmap", self.heatmap_callback, 10, callback_group=heatmap_callback_group)
+        self.path_status_subscriber = self.create_subscription(Bool, "path_status", self.path_status_callback, 10, callback_group=odometry_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
         # Clients
         self.waypoint_client = self.create_client(WaypointService, "waypoints")
@@ -52,6 +62,8 @@ class StateMachine(Node):
         self.branch_points = [] # Points where fault branches exist on the fault
 
         # Path Planning 
+        self.takeoff_height = self.get_parameter("takeoff_height").value
+        self.path_completion = False # If the current path destination has been reached
         self.waypoint_queue = [] # Queue of waypoints since we publish in batches of 4
 
         # State machine
@@ -83,12 +95,15 @@ class StateMachine(Node):
         
 
     def on_enter_takeoff(self):
-        self.waypoint_request("takeoff", 0., 0., -100., 0., 0., 0.)
-        self.waypoint_request("follow", 0., 0., -100., 0., 0., 0.)
+        self.waypoint_request("takeoff", 0., 0., -self.takeoff_height, 0., 0., 0.)
+        while not self.path_status:
+            pass
+        self.start_search()
+
 
     
     def on_enter_startup(self):
-        #prompt for info
+        # TODO check YAML file
 
         # First save the point where UAV started 
         self.initial_pose = self.uav_pose_cache[-1][0]
@@ -110,6 +125,17 @@ class StateMachine(Node):
     def on_enter_resuming(self):
         # resume from last point
         pass
+
+    def path_status_callback(self, msg):
+        """
+        Callback function for the path_status subscription. Alerts the node when
+        the current trajectory is completed
+
+        Parameters:
+        msg (Bool): A boolean indicating if the path the UAV is currently following has been completed
+        """
+        self.path_status = msg
+
 
     def uav_pose_callback(self, msg):
         """
@@ -184,10 +210,10 @@ class StateMachine(Node):
             self.waypoint_request("waypoints", 50., 0., -40., 0., 8.,8.,0.,0.)
             self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
             time.sleep(10)
-            self.waypoint_request("waypoints", self.uav_pose.position[0], self.uav_pose.position[1], self.uav_pose.position[2], 0., self.uav_pose.velocity[0],self.uav_pose.velocity[1],self.uav_pose.velocity[2],0.)
-            self.waypoint_request("waypoints", 100., 25., -20., 0., 10.,10.,0.,0.)
-            self.waypoint_request("waypoints", 50., 0., -40., 0., 10.,10.,0.,0.)
-            self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
+            #self.waypoint_request("waypoints", self.uav_pose.position[0], self.uav_pose.position[1], self.uav_pose.position[2], 0., self.uav_pose.velocity[0],self.uav_pose.velocity[1],self.uav_pose.velocity[2],0.)
+            #self.waypoint_request("waypoints", 100., 25., -20., 0., 10.,10.,0.,0.)
+            #self.waypoint_request("waypoints", 50., 0., -40., 0., 10.,10.,0.,0.)
+            #self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
             #self.waypoint_request("waypoints", 0., 0., -20., 0., 5.,5.,5.,0.)
 
         self.time += 1

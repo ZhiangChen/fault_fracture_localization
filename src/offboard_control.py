@@ -16,7 +16,9 @@ from nav_msgs.msg import Path
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
 from px4_msgs.msg import VehicleCommand, VehicleStatus, VehicleOdometry
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
+import os
+import yaml
 
 class PID:
     def __init__(self, Kp, Ki, Kd, integral_window_size=500):
@@ -69,6 +71,16 @@ class OffboardControl(Node):
     def __init__(self):
         super().__init__("offboard")
 
+        self.declare_parameters(
+            namespace = '',
+            parameters = [
+                    ("control_rate", rclpy.Parameter.Type.INTEGER),
+                    ("target_accel", rclpy.Parameter.Type.DOUBLE),
+                    ("time_upper_bound", rclpy.Parameter.Type.DOUBLE),
+                    ("time_lower_bound", rclpy.Parameter.Type.DOUBLE),
+                ]
+        )
+
         # QOS profiles
         qos_best_effort_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -89,7 +101,7 @@ class OffboardControl(Node):
         self.trajectory_publisher = self.create_publisher(TrajectorySetpoint, '/fmu/in/trajectory_setpoint', 10)
         self.vehicle_command_publisher_ = self.create_publisher(VehicleCommand, "/fmu/in/vehicle_command", 10)
         #self.path_publisher = self.create_publisher(Path, "path", 10)
-        self.path_status_publisher = self.create_publisher(String, "path_status", 10)
+        self.path_status_publisher = self.create_publisher(Bool, "path_status", 10)
 
         # Services
         self.waypoint_service = self.create_service(WaypointService, "waypoints", self.waypoint_callback)
@@ -101,7 +113,7 @@ class OffboardControl(Node):
         self.pid_yaw = PID(2.0, 0.0, 0.0)
 
         # timer callback
-        self.control_rate = 100
+        self.control_rate = self.get_parameter("control_rate").value
         self.sampling_duration = 1.0 / self.control_rate
         self.timer_ = self.create_timer(self.sampling_duration, self.timer_callback, callback_group=timer_callback_group)
         
@@ -111,10 +123,11 @@ class OffboardControl(Node):
         self.path_velocity = []
         self.mode = "init"
         self.arm_status = False
+        self.min_accel = self.get_parameter("target_accel").value # Max acceleration target for drone
+        self.time_lower_bound = self.get_parameter("time_lower_bound").value # Minimum expected time for the drone to take from waypoint to another
+        self.time_upper_bound = self.get_parameter("time_upper_bound").value # Maximum exptected time for drone to take from one waypoint to another
 
-        #DEBUG
-        self.boolarmed = False
-
+        
     def arm(self):
         """
         Sends arm command to vehicle
@@ -202,7 +215,7 @@ class OffboardControl(Node):
             self.get_logger().info("Received path request")
             waypoints = request.waypoints
             # TODO: if two sequential waypoints are the same, response false
-            self.path, self.path_velocity = self.generate_path_cubic(waypoints, 3.0)
+            self.path, self.path_velocity = self.generate_path_cubic(waypoints)
             self.get_logger().info("Path generated")
             self.get_logger().info(str(len(self.path)))
             response.ack = True
@@ -232,45 +245,43 @@ class OffboardControl(Node):
         knowns = np.array([initial_position, initial_velocity, final_position, final_velocity])
         return np.matmul(np.linalg.inv(matrix), knowns)
 
-    def determine_time(self, time_lower_bound, time_upper_bound, min_accel, initial_position, initial_velocity, final_position, final_velocity, max_iter = 100):
+    def determine_traj_time(self, initial_position, initial_velocity, final_position, final_velocity, max_iter = 200):
         """
         Determines the least amount of time needed such that the maximum acceleration using the given parameters is the least greater than the acceleration specified
 
         Parameters:
-        time_lower_bound (int): the lower bound of the amount of time that we will be considering
-        time_upper_bound (int): the upper bound of the amount of time that we will be considering
-        min_accel (float): The minimum acceleration threshold
         initial_position (float): The initial position of the UAV
         initial_velocity (float): The initial velocity of the UAV
         final_position (float): The final position of the UAV
         final_velocity (float): The final velocity of the UAV
         max_iter (int): The maximum number of iterations the binary search will go through
         """
-        l = time_lower_bound - 1
-        r = time_upper_bound + 1
+        l = self.time_lower_bound - 1
+        r = self.time_upper_bound + 1
         iter = 0
         while (True):
             iter += 1
             m = l + (r - l) / 2
             params = self.cubic_solver(initial_position, initial_velocity, final_position, final_velocity, m)
             max_accel = max(abs(6 * params[0] * m + 2 * params[1]), abs(2 * params[1]))
-            if (max_accel > min_accel):
+            if (max_accel > self.min_accel):
                 l = m
             else:
                 r = m
-            if abs(max_accel - min_accel) < .1 or iter > max_iter :
-                print(max_accel)
+            if abs(max_accel - self.min_accel) < .1: 
+                break
+            elif iter > max_iter:
+                self.get_logger().info("Did not find suitable time period in given iterations!")
                 break
         return r
 
 
-    def generate_path_cubic(self, waypoints, target_accel):
+    def generate_path_cubic(self, waypoints):
         """
         Generate a cubic based piecewise interpolation of the waypoints
 
         Parameters:
         waypoints (Waypoint[]): List of waypoints to be interpolated
-        target_accel (float): The target maximum acceleration that the UAV should reach
 
         Returns:
         np.ndarray: Array of 4-tuples detailing the x, y, z, and yaw positions along the path. Number of points determined by control_rate
@@ -279,10 +290,10 @@ class OffboardControl(Node):
         path = []
         path_velocity = []
         for i in range(len(waypoints) - 1):
-            x_time = self.determine_time(1, 1000, target_accel, waypoints[i].x, waypoints[i].velocity_x, waypoints[i + 1].x, waypoints[i + 1].velocity_x)
-            y_time = self.determine_time(1, 1000, target_accel, waypoints[i].y, waypoints[i].velocity_y, waypoints[i + 1].y, waypoints[i + 1].velocity_y)
-            z_time = self.determine_time(1, 1000, target_accel, waypoints[i].z, waypoints[i].velocity_z, waypoints[i + 1].z, waypoints[i + 1].velocity_z)
-            yaw_time = self.determine_time(1, 1000, target_accel, waypoints[i].yaw, waypoints[i].velocity_yaw, waypoints[i + 1].yaw, waypoints[i + 1].velocity_yaw)
+            x_time = self.determine_traj_time(waypoints[i].x, waypoints[i].velocity_x, waypoints[i + 1].x, waypoints[i + 1].velocity_x)
+            y_time = self.determine_traj_time(waypoints[i].y, waypoints[i].velocity_y, waypoints[i + 1].y, waypoints[i + 1].velocity_y)
+            z_time = self.determine_traj_time(waypoints[i].z, waypoints[i].velocity_z, waypoints[i + 1].z, waypoints[i + 1].velocity_z)
+            yaw_time = self.determine_traj_time(waypoints[i].yaw, waypoints[i].velocity_yaw, waypoints[i + 1].yaw, waypoints[i + 1].velocity_yaw)
             time = max(x_time, y_time, z_time, yaw_time)
             x_param = self.cubic_solver(waypoints[i].x, waypoints[i].velocity_x, waypoints[i + 1].x, waypoints[i + 1].velocity_x, time)
             y_param = self.cubic_solver(waypoints[i].y, waypoints[i].velocity_y, waypoints[i + 1].y, waypoints[i + 1].velocity_y, time)
@@ -406,6 +417,7 @@ class OffboardControl(Node):
             z = self.path[0][2]
             yaw = self.path[0][3]
             self.publish_trajectory_command("position", x, y, z, yaw)
+            self.path_status_publisher.publish(False)
 
             # check if the UAV has reached the desired position
             current_position = np.array([position[0], position[1], position[2]])
@@ -415,6 +427,7 @@ class OffboardControl(Node):
             if distance < 0.1 and yaw_diff < 0.1:
                 self.mode = "position"
                 self.get_logger().info("Takeoff completed")
+                self.path_status_publisher.publish(True)
                 # TODO: inform state machine that takeoff is completed
 
         elif self.mode == "position":
@@ -435,6 +448,7 @@ class OffboardControl(Node):
                 z_velocity_cmd = 0.
                 yaw_velocity_cmd = 0.
                 self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
+                self.path_status_publisher.publish(True)
             
             else:
                 # the first waypoint in the path 
@@ -468,13 +482,16 @@ class OffboardControl(Node):
                 y_velocity_cmd = self.pid_y.update(position[1], y, 1/self.control_rate) + y_velocity
                 z_velocity_cmd = self.pid_z.update(position[2] + 4, z, 1/self.control_rate) + z_velocity
                 yaw_velocity_cmd = self.pid_yaw.update(heading[0], yaw, 1/self.control_rate) + yaw_velocity
-                self.get_logger().info('pose x: ' + str(position[0]) + " next x: " + str(x))
-                self.get_logger().info('pose y: ' + str(position[1]) + " next y: " + str(y))
-                self.get_logger().info('pose z: ' + str(position[2] + 4) + " next z: " + str(z))
-                self.get_logger().info("velocity published: " + str(x_velocity_cmd) + " " + str(y_velocity_cmd) + " " + str(z_velocity_cmd))
+                #self.get_logger().info('pose x: ' + str(position[0]) + " next x: " + str(x))
+                #self.get_logger().info('pose y: ' + str(position[1]) + " next y: " + str(y))
+                #self.get_logger().info('pose z: ' + str(position[2] + 4) + " next z: " + str(z))
+                #self.get_logger().info("velocity published: " + str(x_velocity_cmd) + " " + str(y_velocity_cmd) + " " + str(z_velocity_cmd))
 
                 # publish the velocity commands
                 self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
+
+                # publish path completion status
+                self.path_status_publisher.publish(False)
                 
 
 def main(args = None):
