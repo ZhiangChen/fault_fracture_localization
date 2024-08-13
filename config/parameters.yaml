@@ -9,15 +9,17 @@
 /fault_fracture_localization:
   perception:
     ros__parameters:
-      fx: 861.9233198
-      fy: 980.985917
-      cx: 960.0
-      cy: 540.0
+      fx: 861.9233198 # focal length of camera
+      fy: 980.985917 # focal length of camera
+      cx: 960.0 # optical centers
+      cy: 540.0 # optical centers
 
 /fault_fracture_localization:
   state_machine:
     ros__parameters:
       takeoff_height: 100 # The height the drone should take off to
+      waypoint_distance: 10 # The distance between successive waypoints determine by the UAV
+      desired_velocity: 8 # The desired velocity along the x and y axis that the UAV will travel when reaching waypoints
 
 
 

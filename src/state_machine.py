@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import rclpy
-import time
+from time import time
 from rclpy.node import Node
 from rclpy.clock import Clock
 from fault_fracture_localization.srv._waypoint_service import WaypointService
@@ -12,9 +12,13 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from transitions import Machine
+import numpy as np
 from collections import deque
+import networkx as nx
 from scipy.spatial.transform import Rotation
 from std_msgs.msg import Bool
+import cv2
+from cv_bridge import CvBridge
 
 
 class StateMachine(Node):
@@ -25,6 +29,8 @@ class StateMachine(Node):
             namespace = '',
             parameters = [
                     ("takeoff_height", rclpy.Parameter.Type.DOUBLE),
+                    ("waypoint_distance", rclpy.Parameter.Type.DOUBLE),
+                    ("desired_velocity", rclpy.Parameter.Type.DOUBLE),
                 ]
         )
 
@@ -39,11 +45,11 @@ class StateMachine(Node):
 
         # Callback group declarations
         timer_callback_group = MutuallyExclusiveCallbackGroup()
-        heatmap_callback_group = MutuallyExclusiveCallbackGroup()
+        mask_callback_group = MutuallyExclusiveCallbackGroup()
         odometry_callback_group = MutuallyExclusiveCallbackGroup()
 
         # Subscriptions
-        self.heatmap_subscriber = self.create_subscription(Image, "heatmap", self.heatmap_callback, 10, callback_group=heatmap_callback_group)
+        self.heatmap_subscriber = self.create_subscription(Image, "mask", self.mask_callback, 10, callback_group=mask_callback_group)
         self.path_status_subscriber = self.create_subscription(Bool, "path_status", self.path_status_callback, 10, callback_group=odometry_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
         # Clients
@@ -51,9 +57,6 @@ class StateMachine(Node):
         while not self.waypoint_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info("waypoint service not availible, retrying")
 
-        # timer callback for main loop
-        self.timer_period = .05
-        self.timer = self.create_timer(self.timer_period, self.timer_callback, callback_group=timer_callback_group)
         self.time = 0
 
         # UAV data 
@@ -63,8 +66,14 @@ class StateMachine(Node):
 
         # Path Planning 
         self.takeoff_height = self.get_parameter("takeoff_height").value
+        self.waypoint_distance = self.get_parameter("waypoint_distance").value
+        self.desired_velocity = self.get_parameter("desired_velocity").value
         self.path_completion = False # If the current path destination has been reached
         self.waypoint_queue = [] # Queue of waypoints since we publish in batches of 4
+        self.seen = nx.Graph() # Graph of all the points that we have seen
+        self.previous_pose = None # Previous pose UAV saw and recorded
+        self.fault_detected = False # Keeps if a fault was detected in the last mask message that was recieved
+        self.timer = 0 # controls when a pose gets saved into our seen graph
 
         # State machine
         states = ["idle", # UAV is in pretakeoff, unarmed and is currently not doing anything
@@ -97,30 +106,52 @@ class StateMachine(Node):
     def on_enter_takeoff(self):
         self.waypoint_request("takeoff", 0., 0., -self.takeoff_height, 0., 0., 0.)
         while not self.path_status:
-            pass
-        self.start_search()
+            time.sleep(.1)
+        self.machine.start_search()
+
+
+    def on_enter_searching(self):
+        # Swerve camera
+        seen = 0 # Amount of times the fault has been accurately detected in a short span on time
+        misses = 0 # Number of times the fault hasnt been seen in a row
+        while (seen < 5):
+            if (self.fault_detected):
+                seen += 1
+                misses = 0
+            else:
+                misses += 1
+                if (misses > 3):
+                    # Move on to the next point to search
+                    pass
+        
 
 
     
-    def on_enter_startup(self):
+    def on_enter_initiation(self):
+        """
+        Transition from idle state to the initiation state. This state will check the parameter
+        inputs from the YAML file and then transiiton to the takeoff state
+        """
         # TODO check YAML file
 
         # First save the point where UAV started 
         self.initial_pose = self.uav_pose_cache[-1][0]
         
-        pass
+        self.machine.takeoff()
 
     def on_enter_following(self):
-        #start following procedure
-        pass
+        seen = 0
+        misses = 0
+        while (True): 
+            if (self.fault_detected):
+                seen += 1
+                misses = 0
+            else:
+                misses += 1
+                if (misses > 5):
+                    self.machine.end_trace()
 
-    def on_enter_return(self):
-        #return to startpoint
-        pass
-
-    def on_enter_searching(self):
-        #search the area
-        pass
+        # start following procedure
 
     def on_enter_resuming(self):
         # resume from last point
@@ -193,30 +224,48 @@ class StateMachine(Node):
         #rclpy.spin_until_future_complete(self, self.future)
         #return self.future.result()
 
-    def heatmap_callback(self, data):
+    def mask_callback(self, image):
+        """
+        Handles the masked fault images recieved from the perception node by performing a convolution
+        and determining where the UAV should go next if it is in the correct mode. 
+
+        Parameters:
+        image: a ROS image which contains the masked fault
+        """
         # TODO take in heatmap and perform PCA
         #self.publish_waypoint(5.,5.,5.,0.)
-        pass
+        self.timer += 1
+        if self.timer == 20:
+            self.Graph.add_node(self.uav_pose)
+            if self.previous_pose is not None:
+                self.Graph.add_edge(self.previous_pose, self.uav_pose)
+            self.timer = 0
+
+        self.previous_pose = self.uav_pose
+        to_cv = self.bridge.imgmsg_to_cv2(image, desired_encoding = "bgr8")
+        probability_map = self.conv(image)
+        max_index = probability_map.argmax()
+        if probability_map[max_index] == 0:
+            self.fault_detected = False
+        else:
+            self.fault_detected = True
+        y, x = np.unravel_index(max_index, probability_map.shape)
+        x_diff = x - (len(probability_map[0]) // 2)
+        omega = np.arctan2(y, x_diff)
+
+        # Find direction and amount to move in the next waypoint
+        position = self.uav_pose.position
+        new_x = position.x + self.waypoint_distance * np.cos(omega)
+        new_y = position.y + self.waypoint_distance * np.sin(omega)
+
+        if self.machine.state == "searching":
+            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 1)
+
+    def conv(self, image):
+        kernel = np.ones((7, 7))
+        return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
 
 
-    def timer_callback(self):
-
-        # Testing Code
-        if (self.time == 100):
-            self.waypoint_request("takeoff", 0., 0., -50., 0., 0.,0.,0.,0.)
-            time.sleep(10)
-            self.waypoint_request("waypoints", 0., 0., -50., 0., 0.,0.,0.,0.)
-            self.waypoint_request("waypoints", 50., 50., -20., 0., 8.,8.,0.,0.)
-            self.waypoint_request("waypoints", 50., 0., -40., 0., 8.,8.,0.,0.)
-            self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
-            time.sleep(10)
-            #self.waypoint_request("waypoints", self.uav_pose.position[0], self.uav_pose.position[1], self.uav_pose.position[2], 0., self.uav_pose.velocity[0],self.uav_pose.velocity[1],self.uav_pose.velocity[2],0.)
-            #self.waypoint_request("waypoints", 100., 25., -20., 0., 10.,10.,0.,0.)
-            #self.waypoint_request("waypoints", 50., 0., -40., 0., 10.,10.,0.,0.)
-            #self.waypoint_request("waypoints", 25., 25., -20., 0., 0.,0.,0.,0.)
-            #self.waypoint_request("waypoints", 0., 0., -20., 0., 5.,5.,5.,0.)
-
-        self.time += 1
 
 
 def main(args = None):
