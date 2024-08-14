@@ -310,6 +310,10 @@ class Perception(Node):
         extrinsic_matrix (numpy.ndarra): The extrinsic matrix of the camera
         height: the height of the image being projected to in pixels
         width: the width of the image being projected to in pixels
+
+        Returns:
+        np.ndarray: Assocation of each pixel to each point
+        np.ndarray: the indices of the valid points that can be projected
         '''
 
         # To homogoneous points
@@ -346,6 +350,9 @@ class Perception(Node):
         Parameters:
         mask (numpy.ndarray): A masked grayscale edge detection image
         uav_pose (Pose): The pose of the UAV to be used for the update
+        
+        Returns
+
 
         '''
         width, height, spacing = 1920, 1080, 1
@@ -382,13 +389,19 @@ class Perception(Node):
         heatmap[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = heatmap_points[valid_heatmap, 2]
         self.history[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] += 1
         if self.state == "searching" or self.state == "following":
-            self.explored[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] += 1
-            self.explored[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] %= 256
+            self.explored[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = heatmap_points[valid_heatmap, 2]
 # Flip the heatmap vertically
         heatmap = np.flipud(heatmap)
         return heatmap
     
     def update_heatmap(self, mask, uav_pose):
+        """
+        Updates the persistent heatmap with the lastest segmented camera data
+
+        Parameters:
+        mask (np.ndarray): A segmented, grayscale image of the fault
+        uav_pose (Pose): The pose of the UAV at the time of the image
+        """
         heatmap = self.camera_projection(mask, uav_pose)
         if heatmap is None:
             return

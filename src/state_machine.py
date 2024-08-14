@@ -16,7 +16,6 @@ from transitions import Machine
 import numpy as np
 from collections import deque
 import networkx as nx
-from scipy.spatial.transform import Rotation
 from std_msgs.msg import Bool
 import cv2
 from cv_bridge import CvBridge
