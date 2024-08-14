@@ -52,6 +52,7 @@ class StateMachine(Node):
         self.heatmap_subscriber = self.create_subscription(Image, "mask", self.mask_callback, 10, callback_group=mask_callback_group)
         self.path_status_subscriber = self.create_subscription(Bool, "path_status", self.path_status_callback, 10, callback_group=odometry_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
+        self.exploration_subscription = self.create_subscrption(Image, "exploration", self.exploration_callback, 10, callback_group=odometry_callback_group)
 
         # Publishers
         self.state_publisher = self.create_publisher(String, "state")
@@ -166,6 +167,14 @@ class StateMachine(Node):
           # Prompt user for waypoint, etc
         pass
 
+    def exploration_callback(self, msg):
+        """
+        Callback function for exploration subscription
+
+        Parameters:
+        msg (np.ndarray): A 2 dimensional array representing the exploration status of the DEM
+        """
+        pass
 
     def path_status_callback(self, msg):
         """

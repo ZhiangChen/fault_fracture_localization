@@ -55,7 +55,7 @@ class Perception(Node):
 
         # Publishers
         self.segmentation_publisher = self.create_publisher(Image, "mask", 10)
-        self.exploration_publisher = self.create_publisher(Image, "explored", 10)
+        self.exploration_publisher = self.create_publisher(Image, "exploration", 10)
         # self.heatmap_publisher = self.create_publisher(Image, "heatmap", 10)
 
         # Heatmap Generation
