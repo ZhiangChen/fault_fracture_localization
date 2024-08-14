@@ -7,6 +7,7 @@ from fault_fracture_localization.srv._waypoint_service import WaypointService
 from fault_fracture_localization.msg._waypoint import Waypoint
 from sensor_msgs.msg import Image
 from px4_msgs.msg import VehicleOdometry
+from std_msgs.msg import String
 from geometry_msgs.msg import Pose
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
@@ -52,6 +53,9 @@ class StateMachine(Node):
         self.heatmap_subscriber = self.create_subscription(Image, "mask", self.mask_callback, 10, callback_group=mask_callback_group)
         self.path_status_subscriber = self.create_subscription(Bool, "path_status", self.path_status_callback, 10, callback_group=odometry_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
+
+        # Publishers
+        self.state_publisher = self.create_publisher(String, "state")
         # Clients
         self.waypoint_client = self.create_client(WaypointService, "waypoints")
         while not self.waypoint_client.wait_for_service(timeout_sec=1.0):
@@ -106,6 +110,7 @@ class StateMachine(Node):
     def on_enter_takeoff(self):
         self.waypoint_request("takeoff", 0., 0., -self.takeoff_height, 0., 0., 0.)
         while not self.path_status:
+            self.state_publisher.publish("takeoff")
             time.sleep(.1)
         self.machine.start_search()
 
@@ -115,6 +120,7 @@ class StateMachine(Node):
         seen = 0 # Amount of times the fault has been accurately detected in a short span on time
         misses = 0 # Number of times the fault hasnt been seen in a row
         while (seen < 5):
+            self.state_publisher.publish("searching")
             if (self.fault_detected):
                 seen += 1
                 misses = 0
@@ -156,6 +162,11 @@ class StateMachine(Node):
     def on_enter_resuming(self):
         # resume from last point
         pass
+
+    def on_enter_prompting(self):
+          # Prompt user for waypoint, etc
+        pass
+
 
     def path_status_callback(self, msg):
         """
@@ -259,7 +270,7 @@ class StateMachine(Node):
         new_y = position.y + self.waypoint_distance * np.sin(omega)
 
         if self.machine.state == "searching":
-            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 1)
+            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 0)
 
     def conv(self, image):
         kernel = np.ones((7, 7))

@@ -427,7 +427,7 @@ class OffboardControl(Node):
             if distance < 0.1 and yaw_diff < 0.1:
                 self.mode = "position"
                 self.get_logger().info("Takeoff completed")
-                self.path_status_publisher.publish(True)
+                self.path_status_publisher.publish(False)
                 # TODO: inform state machine that takeoff is completed
 
         elif self.mode == "position":

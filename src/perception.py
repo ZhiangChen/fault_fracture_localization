@@ -9,6 +9,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from sensor_msgs.msg import Image
 from px4_msgs.msg import VehicleOdometry
 from geometry_msgs.msg import Pose
+from std_msgs.msg import String
 import cv2
 import numpy as np
 from cv_bridge import CvBridge
@@ -29,6 +30,9 @@ class Perception(Node):
                 ("fy", rclpy.Parameter.Type.DOUBLE),
                 ("cx", rclpy.Parameter.Type.DOUBLE),
                 ("cy", rclpy.Parameter.Type.DOUBLE),
+                ("dem_spacing", rclpy.Parameter.Type.INTEGER),
+                ("sparse_dem_spacing", rclpy.Parameter.Type.INTEGER),
+                ("exploration_window", rclpy.Parameter.Type.INTEGER),
                 ]
         )
 
@@ -47,28 +51,31 @@ class Perception(Node):
         # Subscriptions
         self.camera_subscription = self.create_subscription(Image, "/camera", self.camera_callback, 10, callback_group=camera_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
+        self.state_subscription = self.create_subscription(String, "state", self.state_callback, 10, callback_group=odometry_callback_group)
 
         # Publishers
         self.segmentation_publisher = self.create_publisher(Image, "mask", 10)
-        self.heatmap_publisher = self.create_publisher(Image, "heatmap", 10)
+        self.exploration_publisher = self.create_publisher(Image, "explored", 10)
+        # self.heatmap_publisher = self.create_publisher(Image, "heatmap", 10)
 
         # Heatmap Generation
         self.uav_pose_cache = deque(maxlen=200)
-        self.camera_intrinsic = np.array([[861.923198, 0, 960.0],
-                      [0, 980.985917, 540.0],
-                      [0, 0, 1]])
-        #self.camera_intrinsic = np.array([[self.get_parameter("fx").value, 0, self.get_parameter("cx").value],
-        #                                  [0, self.get_parameter("fy").value, self.get_parameter("cy").value],
-         #                               [0, 0, 1]])  # Hardcoded intrinsic matrix TODO migrate to YAML file
-        #self.camera_intrinsic = np.array([self.get_parameter("camera_intrinsic.row_one").value,
-        #                                  self.get_parameter("camera_instrisic.row_two").value,
-        #                                  self.get_parameter("camera_instrisic.row_three").value,
-        #                                  ])
+        #self.camera_intrinsic = np.array([[861.923198, 0, 960.0],
+        #              [0, 980.985917, 540.0],
+        #              [0, 0, 1]])
+        self.camera_intrinsic = np.array([[self.get_parameter("fx").value, 0, self.get_parameter("cx").value],
+                                          [0, self.get_parameter("fy").value, self.get_parameter("cy").value],
+                                        [0, 0, 1]])  # Hardcoded intrinsic matrix 
+        self.dem_spacing = self.get_parameter("dem_spacing").value
+        self.sparse_dem_spacing = self.get_parameter("sparse_dem_spacing").value
         self.bridge = CvBridge()
-        self.dem  = self.generate_dem(1000, 500, 1) # TODO replace with actual dem 
-        self.sparse_dem = self.generate_dem(1000, 500, 10) # Heatmap used to bound the area needed for actual computation
+        self.dem  = self.generate_dem(1000, 500, self.dem_spacing) # TODO replace with actual dem 
+        self.sparse_dem = self.generate_dem(1000, 500, self.spare_dem_spacing) # Heatmap used to bound the area needed for actual computation
+        self.exploration_window = self.get_parameter("exploration_window").value # length and width of exploration map
         self.heatmap = self.generate_heatmap(1920, 1080) # Persistent heatmap of the area
-        self.history = np.zeros_like(self.heatmap, dtype = np.uint32)
+        self.history = np.zeros_like(self.heatmap, dtype = np.uint32) # Holds how many times any given cell of the heatmap has been seen
+        self.explored = np.zeroes_like(self.heatmap, dtype = np.uint32) # Marks whether a point has already been explored or not
+        self.state = None # Current state the UAV is in
 
 
 
@@ -132,6 +139,14 @@ class Perception(Node):
                      [0, 0, 0, 1]])
         return np.matmul(T, position)
 
+    def state_callback(self, msg):
+        """
+        Callback function for UAV state subscription. 
+
+        Parameters:
+        msg (String): A String containing the current state of the UAV
+        """
+        self.state = msg
 
     def uav_pose_callback(self, msg):
         """
@@ -187,6 +202,14 @@ class Perception(Node):
         pixels = self.edge_mask(results)
         self.update_heatmap(pixels, uav_pose)
         self.segmentation_publisher.publish(self.bridge.cv2_to_imgmsg(pixels.astype(np.uint8), "mono8"))
+
+        # Get local exploration map
+        position = uav_pose.position
+        x_actual = position.x / self.dem_spacing
+        y_actual = position.y / self.dem_spacing
+        part = self.explored[x_actual - self.exploration_window // 2 : x_actual + self.exploration_window // 2 ][y_actual - self.exploration_window // 2 : y_actual + self.exploration_window // 2 ]
+        self.exploration_publisher.publish(part)
+
 
     def edge_mask(self, data):
         """
@@ -334,7 +357,6 @@ class Perception(Node):
         if len(filtered_points) == 0:
             return
 
-
         x_min, x_max = np.min(filtered_points[:, 0]), np.max(filtered_points[:, 0])
         y_min, y_max = np.min(filtered_points[:, 1]), np.max(filtered_points[:, 1])
 
@@ -343,6 +365,7 @@ class Perception(Node):
         points = points[(points[:, 0] >= x_min) & (points[:, 0] <= x_max) & (points[:, 1] >= y_min) & (points[:, 1] <= y_max)]
 
         pixel_point_association, valid_indices = self.points_to_pixels(points, extrinsic_matrix, height, width)
+        points[valid_indices]
 
         img = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
         heatmap_points = points.copy()
@@ -358,6 +381,9 @@ class Perception(Node):
         valid_heatmap = (heatmap_indices[0] >= 0) & (heatmap_indices[0] < width_grid) & (heatmap_indices[1] >= 0) & (heatmap_indices[1] < height_grid)
         heatmap[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = heatmap_points[valid_heatmap, 2]
         self.history[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] += 1
+        if self.state == "searching" or self.state == "following":
+            self.explored[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] += 1
+            self.explored[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] %= 256
 # Flip the heatmap vertically
         heatmap = np.flipud(heatmap)
         return heatmap
@@ -372,7 +398,8 @@ class Perception(Node):
         heatmap = cv2.blur(heatmap, (5, 5))
         self.heatmap = np.where(self.history > 0, (self.heatmap * (self.history) + heatmap), 0)
         self.heatmap = np.divide(self.heatmap, self.history, out = np.zeros_like(self.heatmap), where=self.history!=0, casting="unsafe")
-        self.heatmap_publisher.publish(self.bridge.cv2_to_imgmsg(self.heatmap.astype(np.uint8), encoding="mono8"))
+        # self.heatmap_publisher.publish(self.bridge.cv2_to_imgmsg(self.heatmap.astype(np.uint8), encoding="mono8"))
+
 
 
 def main(args=None):
