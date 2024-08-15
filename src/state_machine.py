@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import rclpy
-from time import time
+import time
 from rclpy.node import Node
 from rclpy.clock import Clock
 from fault_fracture_localization.srv._waypoint_service import WaypointService
@@ -52,21 +52,25 @@ class StateMachine(Node):
         self.heatmap_subscriber = self.create_subscription(Image, "mask", self.mask_callback, 10, callback_group=mask_callback_group)
         self.path_status_subscriber = self.create_subscription(Bool, "path_status", self.path_status_callback, 10, callback_group=odometry_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
-        self.exploration_subscription = self.create_subscrption(Image, "exploration", self.exploration_callback, 10, callback_group=odometry_callback_group)
+        self.exploration_subscription = self.create_subscription(Image, "exploration", self.exploration_callback, 10, callback_group=odometry_callback_group)
 
         # Publishers
-        self.state_publisher = self.create_publisher(String, "state")
+        self.state_publisher = self.create_publisher(String, "state", 10)
         # Clients
         self.waypoint_client = self.create_client(WaypointService, "waypoints")
         while not self.waypoint_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info("waypoint service not availible, retrying")
 
+            
         self.time = 0
+        self.timer_period = .1
+        self.timer = self.create_timer(self.timer_period , self.timer_callback, callback_group=timer_callback_group)
 
         # UAV data 
         self.uav_pose = None # Current UAV Pose
         self.initial_pose = None # Where the UAV takes off and will return to
         self.branch_points = [] # Points where fault branches exist on the fault
+        self.bridge = CvBridge()
 
         # Path Planning 
         self.takeoff_height = self.get_parameter("takeoff_height").value
@@ -78,6 +82,7 @@ class StateMachine(Node):
         self.previous_pose = None # Previous pose UAV saw and recorded
         self.fault_detected = False # Keeps if a fault was detected in the last mask message that was recieved
         self.timer = 0 # controls when a pose gets saved into our seen graph
+        self.path_status = False
 
         # State machine
         states = ["idle", # UAV is in pretakeoff, unarmed and is currently not doing anything
@@ -108,11 +113,12 @@ class StateMachine(Node):
         
 
     def on_enter_takeoff(self):
-        self.waypoint_request("takeoff", 0., 0., -self.takeoff_height, 0., 0., 0.)
+        x = self.uav_pose.position[0]
+        y = self.uav_pose.position[1]
+        self.waypoint_request("takeoff", x, y, -self.takeoff_height, 0., 0., 0., 0., 0.)
         while not self.path_status:
-            self.state_publisher.publish("takeoff")
             time.sleep(.1)
-        self.machine.start_search()
+        self.start_search()
 
 
     def on_enter_searching(self):
@@ -120,7 +126,6 @@ class StateMachine(Node):
         seen = 0 # Amount of times the fault has been accurately detected in a short span on time
         misses = 0 # Number of times the fault hasnt been seen in a row
         while (seen < 5):
-            self.state_publisher.publish("searching")
             if (self.fault_detected):
                 seen += 1
                 misses = 0
@@ -136,14 +141,16 @@ class StateMachine(Node):
     def on_enter_initiation(self):
         """
         Transition from idle state to the initiation state. This state will check the parameter
-        inputs from the YAML file and then transiiton to the takeoff state
+        inputs from the YAML file and then transition to the takeoff state
         """
         # TODO check YAML file
 
         # First save the point where UAV started 
-        self.initial_pose = self.uav_pose_cache[-1][0]
+        while(self.uav_pose is None):
+            pass
+        self.initial_pose = self.uav_pose
         
-        self.machine.takeoff()
+        self.takeoff()
 
     def on_enter_following(self):
         seen = 0
@@ -155,7 +162,7 @@ class StateMachine(Node):
             else:
                 misses += 1
                 if (misses > 5):
-                    self.machine.end_trace()
+                    self.end_trace()
 
         # start following procedure
 
@@ -184,7 +191,7 @@ class StateMachine(Node):
         Parameters:
         msg (Bool): A boolean indicating if the path the UAV is currently following has been completed
         """
-        self.path_status = msg
+        self.path_status = msg.data
 
 
     def uav_pose_callback(self, msg):
@@ -262,27 +269,37 @@ class StateMachine(Node):
 
         self.previous_pose = self.uav_pose
         to_cv = self.bridge.imgmsg_to_cv2(image, desired_encoding = "bgr8")
-        probability_map = self.conv(image)
+        probability_map = self.conv(to_cv)
         max_index = probability_map.argmax()
-        if probability_map[max_index] == 0:
+        if np.amax(probability_map) == 0:
             self.fault_detected = False
         else:
             self.fault_detected = True
-        y, x = np.unravel_index(max_index, probability_map.shape)
+        indices = np.unravel_index(max_index, probability_map.shape)
+        y, x, z = indices
         x_diff = x - (len(probability_map[0]) // 2)
         omega = np.arctan2(y, x_diff)
 
         # Find direction and amount to move in the next waypoint
         position = self.uav_pose.position
-        new_x = position.x + self.waypoint_distance * np.cos(omega)
-        new_y = position.y + self.waypoint_distance * np.sin(omega)
+        new_x = position[0] + self.waypoint_distance * np.cos(omega)
+        new_y = position[1] + self.waypoint_distance * np.sin(omega)
 
-        if self.machine.state == "searching":
+        if self.state == "searching":
             self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 0)
 
     def conv(self, image):
         kernel = np.ones((7, 7))
         return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
+    
+    def timer_callback(self):
+        if (self.time == 0):
+            self.startup()
+
+        self.state_publisher.publish(self.state)
+        self.time += 1
+
+
 
 
 

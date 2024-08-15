@@ -70,11 +70,11 @@ class Perception(Node):
         self.sparse_dem_spacing = self.get_parameter("sparse_dem_spacing").value
         self.bridge = CvBridge()
         self.dem  = self.generate_dem(1000, 500, self.dem_spacing) # TODO replace with actual dem 
-        self.sparse_dem = self.generate_dem(1000, 500, self.spare_dem_spacing) # Heatmap used to bound the area needed for actual computation
+        self.sparse_dem = self.generate_dem(1000, 500, self.sparse_dem_spacing) # Heatmap used to bound the area needed for actual computation
         self.exploration_window = self.get_parameter("exploration_window").value # length and width of exploration map
         self.heatmap = self.generate_heatmap(1920, 1080) # Persistent heatmap of the area
         self.history = np.zeros_like(self.heatmap, dtype = np.uint32) # Holds how many times any given cell of the heatmap has been seen
-        self.explored = np.zeroes_like(self.heatmap, dtype = np.uint32) # Marks whether a point has already been explored or not
+        self.explored = np.zeros_like(self.heatmap, dtype = np.uint32) # Marks whether a point has already been explored or not
         self.state = None # Current state the UAV is in
 
 
@@ -205,10 +205,10 @@ class Perception(Node):
 
         # Get local exploration map
         position = uav_pose.position
-        x_actual = position.x / self.dem_spacing
-        y_actual = position.y / self.dem_spacing
-        part = self.explored[x_actual - self.exploration_window // 2 : x_actual + self.exploration_window // 2 ][y_actual - self.exploration_window // 2 : y_actual + self.exploration_window // 2 ]
-        self.exploration_publisher.publish(part)
+        x_actual = position.x // self.dem_spacing
+        y_actual = position.y // self.dem_spacing
+        part = self.explored[int(x_actual - self.exploration_window // 2) : int(x_actual + self.exploration_window // 2) ][int(y_actual - self.exploration_window // 2) : int(y_actual + self.exploration_window // 2) ]
+        self.exploration_publisher.publish(self.bridge.cv2_to_imgmsg(part.astype(np.uint8), "mono8"))
 
 
     def edge_mask(self, data):

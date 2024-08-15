@@ -370,6 +370,17 @@ class OffboardControl(Node):
         path = [[spline[0][i], spline[1][i], spline[2][i], spline[3][i]] for i in range(len(spline[0]))]
 
         return path
+
+    def publish_path_status(self, value):
+        """
+        Publishes a boolean value to the path status publisher
+
+        Parameters:
+        value (Boolean): The value to be published
+        """
+        msg = Bool()
+        msg.data = value
+        self.path_status_publisher.publish(msg)
     
     def publish_trajectory_command(self, action, x, y, z, yaw):
         """
@@ -417,7 +428,7 @@ class OffboardControl(Node):
             z = self.path[0][2]
             yaw = self.path[0][3]
             self.publish_trajectory_command("position", x, y, z, yaw)
-            self.path_status_publisher.publish(False)
+            self.publish_path_status(False)
 
             # check if the UAV has reached the desired position
             current_position = np.array([position[0], position[1], position[2]])
@@ -427,8 +438,7 @@ class OffboardControl(Node):
             if distance < 0.1 and yaw_diff < 0.1:
                 self.mode = "position"
                 self.get_logger().info("Takeoff completed")
-                self.path_status_publisher.publish(False)
-                # TODO: inform state machine that takeoff is completed
+                self.publish_path_status(True)
 
         elif self.mode == "position":
             self.publish_offboard_mode("position")
@@ -448,7 +458,7 @@ class OffboardControl(Node):
                 z_velocity_cmd = 0.
                 yaw_velocity_cmd = 0.
                 self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
-                self.path_status_publisher.publish(True)
+                self.publish_path_status(True)
             
             else:
                 # the first waypoint in the path 
@@ -491,7 +501,7 @@ class OffboardControl(Node):
                 self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
 
                 # publish path completion status
-                self.path_status_publisher.publish(False)
+                self.publish_path_status(True)
                 
 
 def main(args = None):
