@@ -78,7 +78,6 @@ class StateMachine(Node):
         self.desired_velocity = self.get_parameter("desired_velocity").value
         self.path_completion = False # If the current path destination has been reached
         self.waypoint_queue = [] # Queue of waypoints since we publish in batches of 4
-        self.seen = nx.Graph() # Graph of all the points that we have seen
         self.previous_pose = None # Previous pose UAV saw and recorded
         self.fault_detected = False # Keeps if a fault was detected in the last mask message that was recieved
         self.timer = 0 # controls when a pose gets saved into our seen graph
@@ -261,11 +260,11 @@ class StateMachine(Node):
         # TODO take in heatmap and perform PCA
         #self.publish_waypoint(5.,5.,5.,0.)
         self.timer += 1
-        if self.timer == 20:
-            self.Graph.add_node(self.uav_pose)
-            if self.previous_pose is not None:
-                self.Graph.add_edge(self.previous_pose, self.uav_pose)
-            self.timer = 0
+        #if self.timer == 20:
+        #    self.Graph.add_node(self.uav_pose)
+        #    if self.previous_pose is not None:
+        #        self.Graph.add_edge(self.previous_pose, self.uav_pose)
+        #    self.timer = 0
 
         self.previous_pose = self.uav_pose
         to_cv = self.bridge.imgmsg_to_cv2(image, desired_encoding = "bgr8")
@@ -284,6 +283,7 @@ class StateMachine(Node):
         position = self.uav_pose.position
         new_x = position[0] + self.waypoint_distance * np.cos(omega)
         new_y = position[1] + self.waypoint_distance * np.sin(omega)
+        self.get_logger().info(str(new_x) + " " + str(new_y))
 
         if self.state == "searching":
             self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 0)
