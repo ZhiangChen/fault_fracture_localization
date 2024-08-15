@@ -63,8 +63,8 @@ class StateMachine(Node):
 
             
         self.time = 0
-        self.timer_period = .1
-        self.timer = self.create_timer(self.timer_period , self.timer_callback, callback_group=timer_callback_group)
+        self.timer_period = 1
+        self.timer_ = self.create_timer(self.timer_period, self.timer_callback, callback_group=timer_callback_group)
 
         # UAV data 
         self.uav_pose = None # Current UAV Pose
@@ -80,7 +80,6 @@ class StateMachine(Node):
         self.waypoint_queue = [] # Queue of waypoints since we publish in batches of 4
         self.previous_pose = None # Previous pose UAV saw and recorded
         self.fault_detected = False # Keeps if a fault was detected in the last mask message that was recieved
-        self.timer = 0 # controls when a pose gets saved into our seen graph
         self.path_status = False
 
         # State machine
@@ -108,15 +107,17 @@ class StateMachine(Node):
             #{ 'trigger': 'hover', 'source': ['takeoff', 'following', 'searching', 'return', 'resuming'], 'dest': 'hover' },
             #{ 'trigger': 'return', 'source': ['takeoff', 'following', 'searching', 'hover', 'resuming'], 'dest': 'return' },
         ]
-        self.machine = Machine(model=self, states=states, transitions=transitions, initial="idle")
+        self.machine = Machine(self, states=states, transitions=transitions, initial="idle")
+        self.startup()
         
 
     def on_enter_takeoff(self):
+        self.get_logger().info("taking off...")
         x = self.uav_pose.position[0]
         y = self.uav_pose.position[1]
         self.waypoint_request("takeoff", x, y, -self.takeoff_height, 0., 0., 0., 0., 0.)
         while not self.path_status:
-            time.sleep(.1)
+            pass
         self.start_search()
 
 
@@ -144,8 +145,10 @@ class StateMachine(Node):
         """
         # TODO check YAML file
 
+        self.get_logger().info("initiating...")
         # First save the point where UAV started 
         while(self.uav_pose is None):
+            self.get_logger().info("waiting for pose...")
             pass
         self.initial_pose = self.uav_pose
         
@@ -202,6 +205,7 @@ class StateMachine(Node):
         msg (VehicleOdometry): A VehicleOdometry message published by PX4
 
         """
+        self.get_logger().info("pose got")
         self.uav_pose = msg
 
     def waypoint_request(self, action, x, y, z, yaw, x_vel, y_vel, z_vel, yaw_vel):
@@ -259,7 +263,7 @@ class StateMachine(Node):
         """
         # TODO take in heatmap and perform PCA
         #self.publish_waypoint(5.,5.,5.,0.)
-        self.timer += 1
+        #self.timer += 1
         #if self.timer == 20:
         #    self.Graph.add_node(self.uav_pose)
         #    if self.previous_pose is not None:
@@ -283,7 +287,7 @@ class StateMachine(Node):
         position = self.uav_pose.position
         new_x = position[0] + self.waypoint_distance * np.cos(omega)
         new_y = position[1] + self.waypoint_distance * np.sin(omega)
-        self.get_logger().info(str(new_x) + " " + str(new_y))
+        # self.get_logger().info(str(new_x) + " " + str(new_y))
 
         if self.state == "searching":
             self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 0)
@@ -291,16 +295,15 @@ class StateMachine(Node):
     def conv(self, image):
         kernel = np.ones((7, 7))
         return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
-    
+
+    def publish_state(self, data):
+        msg = String()
+        msg.data = data
+        self.state_publisher.publish(msg)
+
     def timer_callback(self):
-        if (self.time == 0):
-            self.startup()
-
-        self.state_publisher.publish(self.state)
-        self.time += 1
-
-
-
+        self.publish_state(self.state)
+        self.get_logger().info(self.state)
 
 
 
