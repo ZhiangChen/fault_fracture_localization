@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 import time
+import threading
 from rclpy.node import Node
 from rclpy.clock import Clock
 from fault_fracture_localization.srv._waypoint_service import WaypointService
@@ -44,6 +45,7 @@ class StateMachine(Node):
         )
 
         # Callback group declarations
+        machine_callback_group = MutuallyExclusiveCallbackGroup()
         timer_callback_group = MutuallyExclusiveCallbackGroup()
         mask_callback_group = MutuallyExclusiveCallbackGroup()
         odometry_callback_group = MutuallyExclusiveCallbackGroup()
@@ -64,7 +66,8 @@ class StateMachine(Node):
             
         self.time = 0
         self.timer_period = 1
-        self.timer_ = self.create_timer(self.timer_period, self.timer_callback, callback_group=timer_callback_group)
+        # self.machine_timer = self.create_timer(self.timer_period, self.machine_timer_callback, callback_group=machine_callback_group)
+        self.state_timer = self.create_timer(self.timer_period, self.state_timer_callback, callback_group=timer_callback_group)
 
         # UAV data 
         self.uav_pose = None # Current UAV Pose
@@ -108,7 +111,10 @@ class StateMachine(Node):
             #{ 'trigger': 'return', 'source': ['takeoff', 'following', 'searching', 'hover', 'resuming'], 'dest': 'return' },
         ]
         self.machine = Machine(self, states=states, transitions=transitions, initial="idle")
-        self.startup()
+        self.machine_interval = .1 # amount the machine thread will sleep after each loop
+
+        machine_thread = threading.Thread(target=self.startup())
+        machine_thread.start()
         
 
     def on_enter_takeoff(self):
@@ -117,7 +123,7 @@ class StateMachine(Node):
         y = self.uav_pose.position[1]
         self.waypoint_request("takeoff", x, y, -self.takeoff_height, 0., 0., 0., 0., 0.)
         while not self.path_status:
-            pass
+            time.sleep(self.machine_interval)
         self.start_search()
 
 
@@ -134,6 +140,7 @@ class StateMachine(Node):
                 if (misses > 3):
                     # Move on to the next point to search
                     pass
+            time.sleep(self.machine_interval)
         
 
 
@@ -149,7 +156,7 @@ class StateMachine(Node):
         # First save the point where UAV started 
         while(self.uav_pose is None):
             self.get_logger().info("waiting for pose...")
-            pass
+            time.sleep(self.machine_interval)
         self.initial_pose = self.uav_pose
         
         self.takeoff()
@@ -165,6 +172,7 @@ class StateMachine(Node):
                 misses += 1
                 if (misses > 5):
                     self.end_trace()
+            time.sleep(self.machine_interval)
 
         # start following procedure
 
@@ -205,7 +213,7 @@ class StateMachine(Node):
         msg (VehicleOdometry): A VehicleOdometry message published by PX4
 
         """
-        self.get_logger().info("pose got")
+        self.get_logger().info("pose recieved")
         self.uav_pose = msg
 
     def waypoint_request(self, action, x, y, z, yaw, x_vel, y_vel, z_vel, yaw_vel):
@@ -301,10 +309,12 @@ class StateMachine(Node):
         msg.data = data
         self.state_publisher.publish(msg)
 
-    def timer_callback(self):
+    def state_timer_callback(self):
         self.publish_state(self.state)
         self.get_logger().info(self.state)
 
+    def machine_timer_callback(self):
+        self.startup()
 
 
 def main(args = None):
