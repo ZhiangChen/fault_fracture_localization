@@ -65,7 +65,7 @@ class StateMachine(Node):
 
             
         self.time = 0
-        self.timer_period = 1
+        self.timer_period = .5
         # self.machine_timer = self.create_timer(self.timer_period, self.machine_timer_callback, callback_group=machine_callback_group)
         self.state_timer = self.create_timer(self.timer_period, self.state_timer_callback, callback_group=timer_callback_group)
 
@@ -122,8 +122,8 @@ class StateMachine(Node):
         x = self.uav_pose.position[0]
         y = self.uav_pose.position[1]
         self.waypoint_request("takeoff", x, y, -self.takeoff_height, 0., 0., 0., 0., 0.)
-        while not self.path_status:
-            time.sleep(self.machine_interval)
+        while not self.check_path_status():
+            rclpy.spin_once(self, timeout_sec=self.machine_interval)
         self.start_search()
 
 
@@ -140,7 +140,7 @@ class StateMachine(Node):
                 if (misses > 3):
                     # Move on to the next point to search
                     pass
-            time.sleep(self.machine_interval)
+            rclpy.spin_once(self, timeout_sec=self.machine_interval)
         
 
 
@@ -156,7 +156,7 @@ class StateMachine(Node):
         # First save the point where UAV started 
         while(self.uav_pose is None):
             self.get_logger().info("waiting for pose...")
-            time.sleep(self.machine_interval)
+            rclpy.spin_once(self, timeout_sec=self.machine_interval)
         self.initial_pose = self.uav_pose
         
         self.takeoff()
@@ -172,7 +172,7 @@ class StateMachine(Node):
                 misses += 1
                 if (misses > 5):
                     self.end_trace()
-            time.sleep(self.machine_interval)
+            rclpy.spin_once(self, timeout_sec=self.machine_interval)
 
         # start following procedure
 
@@ -201,6 +201,7 @@ class StateMachine(Node):
         Parameters:
         msg (Bool): A boolean indicating if the path the UAV is currently following has been completed
         """
+        self.get_logger().info("recieved data")
         self.path_status = msg.data
 
 
@@ -213,7 +214,7 @@ class StateMachine(Node):
         msg (VehicleOdometry): A VehicleOdometry message published by PX4
 
         """
-        self.get_logger().info("pose recieved")
+        # self.get_logger().info("pose recieved")
         self.uav_pose = msg
 
     def waypoint_request(self, action, x, y, z, yaw, x_vel, y_vel, z_vel, yaw_vel):
@@ -308,10 +309,19 @@ class StateMachine(Node):
         msg = String()
         msg.data = data
         self.state_publisher.publish(msg)
+        #self.get_logger().info(self.state)
+
+    def check_path_status(self):
+        if not self.path_status:
+            return False
+        else:
+            self.path_status = False
+            return True
+
 
     def state_timer_callback(self):
         self.publish_state(self.state)
-        self.get_logger().info(self.state)
+        #self.get_logger().info(self.state)
 
     def machine_timer_callback(self):
         self.startup()

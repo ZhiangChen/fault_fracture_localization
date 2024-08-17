@@ -428,7 +428,7 @@ class OffboardControl(Node):
             z = self.path[0][2]
             yaw = self.path[0][3]
             self.publish_trajectory_command("position", x, y, z, yaw)
-            self.publish_path_status(False)
+            # self.publish_path_status(False)
 
             # check if the UAV has reached the desired position
             current_position = np.array([position[0], position[1], position[2]])
@@ -501,7 +501,7 @@ class OffboardControl(Node):
                 self.publish_trajectory_command("velocity", x_velocity_cmd, y_velocity_cmd, z_velocity_cmd, yaw_velocity_cmd)
 
                 # publish path completion status
-                self.publish_path_status(True)
+                # self.publish_path_status(True)
                 
 
 def main(args = None):
