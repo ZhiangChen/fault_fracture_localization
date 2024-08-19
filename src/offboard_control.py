@@ -17,8 +17,6 @@ from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
 from px4_msgs.msg import VehicleCommand, VehicleStatus, VehicleOdometry
 from std_msgs.msg import String, Bool
-import os
-import yaml
 
 class PID:
     def __init__(self, Kp, Ki, Kd, integral_window_size=500):
@@ -427,6 +425,8 @@ class OffboardControl(Node):
             y = self.path[0][1]
             z = self.path[0][2]
             yaw = self.path[0][3]
+            # self.get_logger().info("Desired: " + str(x) + " " + str(y) + " " + str(z))
+            # self.get_logger().info("Current: " + str(position[0]) + " " + str(position[1]) + " " + str(position[2]))
             self.publish_trajectory_command("position", x, y, z, yaw)
             # self.publish_path_status(False)
 
@@ -434,8 +434,10 @@ class OffboardControl(Node):
             current_position = np.array([position[0], position[1], position[2]])
             desired_position = np.array([x, y, z])
             distance = np.linalg.norm(current_position - desired_position)
-            yaw_diff = abs(heading[0] - yaw)
-            if distance < 0.1 and yaw_diff < 0.1:
+            # self.get_logger().info("distance error: " + str(distance))
+            yaw_diff = abs(heading[0] - yaw) % 3.1415
+            # self.get_logger().info("yaw error: " + str(yaw_diff))
+            if distance < 1 and yaw_diff < 0.1:
                 self.mode = "position"
                 self.get_logger().info("Takeoff completed")
                 self.publish_path_status(True)

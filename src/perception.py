@@ -211,8 +211,8 @@ class Perception(Node):
         x_high = int(min(len(self.explored[0]), (x_actual + (self.exploration_window // 2) + len(self.explored[0]) // 2)))
         y_low = int(max(0, (y_actual - (self.exploration_window // 2) + len(self.explored) // 2)))
         y_high = int(min(len(self.explored), (y_actual + (self.exploration_window // 2) + len(self.explored) // 2)))
-        #self.get_logger().info(str(x_actual) + " " + str(y_actual))
-        #self.get_logger().info(str(x_low) + " " + str(x_high) + " " + str(y_low) + " " + str(y_high))
+        # self.get_logger().info(str(x_actual) + " " + str(y_actual))
+        self.get_logger().info(str(x_low) + " " + str(x_high) + " " + str(y_low) + " " + str(y_high))
         part = self.explored[x_low:x_high][y_low:y_high]
         self.exploration_publisher.publish(self.bridge.cv2_to_imgmsg(part.astype(np.uint8), "mono8"))
 

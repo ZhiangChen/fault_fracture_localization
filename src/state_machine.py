@@ -76,7 +76,7 @@ class StateMachine(Node):
         self.bridge = CvBridge()
 
         # Path Planning 
-        self.takeoff_height = self.get_parameter("takeoff_height").value
+        self.takeoff_height = -self.get_parameter("takeoff_height").value # negate because of coordinate systems
         self.waypoint_distance = self.get_parameter("waypoint_distance").value
         self.desired_velocity = self.get_parameter("desired_velocity").value
         self.path_completion = False # If the current path destination has been reached
@@ -121,7 +121,7 @@ class StateMachine(Node):
         self.get_logger().info("taking off...")
         x = self.uav_pose.position[0]
         y = self.uav_pose.position[1]
-        self.waypoint_request("takeoff", x, y, -self.takeoff_height, 0., 0., 0., 0., 0.)
+        self.waypoint_request("takeoff", x, y, self.takeoff_height, 0., 0., 0., 0., 0.)
         while not self.check_path_status():
             rclpy.spin_once(self, timeout_sec=self.machine_interval)
         self.start_search()
@@ -299,7 +299,7 @@ class StateMachine(Node):
         # self.get_logger().info(str(new_x) + " " + str(new_y))
 
         if self.state == "searching":
-            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 0)
+            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 0, 0)
 
     def conv(self, image):
         kernel = np.ones((7, 7))
