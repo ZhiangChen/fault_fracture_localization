@@ -3,6 +3,7 @@ import rclpy
 import time
 import threading
 from rclpy.node import Node
+from scipy.spatial.transform import Rotation
 from rclpy.clock import Clock
 from fault_fracture_localization.srv._waypoint_service import WaypointService
 from fault_fracture_localization.msg._waypoint import Waypoint
@@ -113,7 +114,7 @@ class StateMachine(Node):
         self.machine = Machine(self, states=states, transitions=transitions, initial="idle")
         self.machine_interval = .1 # amount the machine thread will sleep after each loop
 
-        machine_thread = threading.Thread(target=self.startup())
+        machine_thread = threading.Thread(target=self.startup)
         machine_thread.start()
         
 
@@ -201,7 +202,7 @@ class StateMachine(Node):
         Parameters:
         msg (Bool): A boolean indicating if the path the UAV is currently following has been completed
         """
-        self.get_logger().info("recieved data")
+        # self.get_logger().info("recieved data")
         self.path_status = msg.data
 
 
@@ -249,11 +250,10 @@ class StateMachine(Node):
             req.action = action
             req.waypoints = [waypoint]
             self.future = self.waypoint_client.call_async(req)
-            self.waypoint_queue.clear()
 
         else:
             self.waypoint_queue.append(waypoint)
-            if len(self.waypoint_queue) == 4:
+            if len(self.waypoint_queue) == 2:
                 req = WaypointService.Request()
                 req.action = action
                 req.waypoints = self.waypoint_queue
@@ -285,8 +285,9 @@ class StateMachine(Node):
         max_index = probability_map.argmax()
         if np.amax(probability_map) == 0:
             self.fault_detected = False
-        else:
-            self.fault_detected = True
+            self.get_logger().info("nothing found lol")
+            return
+        self.fault_detected = True
         indices = np.unravel_index(max_index, probability_map.shape)
         y, x, z = indices
         x_diff = x - (len(probability_map[0]) // 2)
@@ -294,12 +295,18 @@ class StateMachine(Node):
 
         # Find direction and amount to move in the next waypoint
         position = self.uav_pose.position
+        orientation = self.uav_pose.q
+        velocity = self.uav_pose.velocity
+        angular_velocity = self.uav_pose.angular_velocity
+        heading = Rotation.from_quat([orientation[3], orientation[0], orientation[1], orientation[2]]).as_euler('zyx')
         new_x = position[0] + self.waypoint_distance * np.cos(omega)
         new_y = position[1] + self.waypoint_distance * np.sin(omega)
         # self.get_logger().info(str(new_x) + " " + str(new_y))
+        self.get_logger().info("height " + str(position[2]))
 
         if self.state == "searching":
-            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, 0.0, self.desired_velocity, self.desired_velocity, 0, 0)
+            self.waypoint_request("waypoints", position[0], position[1], self.takeoff_height, heading[0], velocity[0], velocity[1], 0, angular_velocity[0])
+            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, omega, self.desired_velocity, self.desired_velocity, 0, 0)
 
     def conv(self, image):
         kernel = np.ones((7, 7))

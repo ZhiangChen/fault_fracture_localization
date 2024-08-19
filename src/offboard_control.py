@@ -241,7 +241,10 @@ class OffboardControl(Node):
                            [time ** 3, time ** 2, time, 1],
                            [3 * (time ** 2), 2 * time, 1 , 0]])
         knowns = np.array([initial_position, initial_velocity, final_position, final_velocity])
-        return np.matmul(np.linalg.inv(matrix), knowns)
+        params = np.matmul(np.linalg.inv(matrix), knowns)
+        #self.get_logger().info("inputs: " + str(initial_position) + " " + str(initial_velocity) + " " + str(final_position) + " " + str(final_velocity) + " " + str(time))
+        #self.get_logger().info("params: " + str(params[0]) + " " + str(params[1]) + " " + str(params[2]) + " " + str(params[3]))
+        return params
 
     def determine_traj_time(self, initial_position, initial_velocity, final_position, final_velocity, max_iter = 200):
         """
@@ -259,8 +262,10 @@ class OffboardControl(Node):
         iter = 0
         while (True):
             iter += 1
-            m = l + (r - l) / 2
+            m = (l + r) / 2.0
             params = self.cubic_solver(initial_position, initial_velocity, final_position, final_velocity, m)
+            #self.get_logger().info(str(6 * params[0] * m + 2 * params[1]))
+            #self.get_logger().info(str(2 * params[1]))
             max_accel = max(abs(6 * params[0] * m + 2 * params[1]), abs(2 * params[1]))
             if (max_accel > self.min_accel):
                 l = m
@@ -269,7 +274,8 @@ class OffboardControl(Node):
             if abs(max_accel - self.min_accel) < .1: 
                 break
             elif iter > max_iter:
-                self.get_logger().info("Did not find suitable time period in given iterations!")
+                # self.get_logger().info("Did not find suitable time period in given iterations!")
+                # self.get_logger().info("current_accel: " + str(max_accel) + " target accel: " + str(self.min_accel))
                 break
         return r
 
@@ -396,7 +402,7 @@ class OffboardControl(Node):
             msg.position = [float('nan'), float('nan'), float('nan')]
             msg.velocity = [x, y, z]
             msg.acceleration = [float('nan'), float('nan'), float('nan')]
-            #msg.yawspeed = yaw
+            msg.yawspeed = yaw
         elif (action == "position"):
             msg.position = [x, y, z]
             msg.velocity = [float('nan'), float('nan'), float('nan')]
