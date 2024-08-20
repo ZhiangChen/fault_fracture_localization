@@ -119,16 +119,26 @@ class StateMachine(Node):
         
 
     def on_enter_takeoff(self):
+        """
+        This function will be automatically invoked when the state machine transitions to the takeoff
+        state. The UAV attempts to take off after recieving the UAV pose and then transitions into the 
+        search state
+        """
         self.get_logger().info("taking off...")
         x = self.uav_pose.position[0]
         y = self.uav_pose.position[1]
-        self.waypoint_request("takeoff", x, y, self.takeoff_height, 0., 0., 0., 0., 0.)
+        self.waypoint_request("takeoff", x, y, self.takeoff_height, 1.57, 0., 0., 0., 0.)
         while not self.check_path_status():
             rclpy.spin_once(self, timeout_sec=self.machine_interval)
         self.start_search()
 
 
     def on_enter_searching(self):
+        """
+        This function will be automatically invoked when the state machine transitions to the searching
+        state. The UAV will attempt to detect a fault to a reasonable level. If it cannot detect the fault,
+        it will prompt the user on what to do next
+        """
         # Swerve camera
         seen = 0 # Amount of times the fault has been accurately detected in a short span on time
         misses = 0 # Number of times the fault hasnt been seen in a row
@@ -139,7 +149,7 @@ class StateMachine(Node):
             else:
                 misses += 1
                 if (misses > 3):
-                    # Move on to the next point to search
+                    # Prompt user for next action
                     pass
             rclpy.spin_once(self, timeout_sec=self.machine_interval)
         
@@ -163,6 +173,11 @@ class StateMachine(Node):
         self.takeoff()
 
     def on_enter_following(self):
+        """
+        This function will be automatically be invoked when the UAV enters the following state. The UAV
+        will follow the fault until there is a period where the UAV is not sure that there is a fault, where it 
+        will return to the search state
+        """
         seen = 0
         misses = 0
         while (True): 
@@ -306,7 +321,7 @@ class StateMachine(Node):
 
         if self.state == "searching":
             self.waypoint_request("waypoints", position[0], position[1], self.takeoff_height, heading[0], velocity[0], velocity[1], 0, angular_velocity[0])
-            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, omega, self.desired_velocity, self.desired_velocity, 0, 0)
+            self.waypoint_request("waypoints", new_x, new_y, self.takeoff_height, omega, self.desired_velocity * np.cos(omega), self.desired_velocity * np.sin(omega), 0, 0)
 
     def conv(self, image):
         kernel = np.ones((7, 7))
