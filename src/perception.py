@@ -399,11 +399,10 @@ class Perception(Node):
         self.history[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] += 1
 
         # Update exploration map
-        mask = (heatmap_points[valid_heatmap, 2] == 255)
-        self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = np.where(mask, 255, self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] )
         mask = (self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] < 255)
         self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = np.where(mask, 75, self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]])
-        self.get_logger().info("done")
+        mask = (heatmap_points[valid_heatmap, 2] == 255)
+        self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = np.where(mask, 255, self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] )
         self.update_frontier()
 # Flip the heatmap vertically
         heatmap = np.flipud(heatmap)
