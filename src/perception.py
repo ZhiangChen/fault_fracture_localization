@@ -12,6 +12,7 @@ from geometry_msgs.msg import Pose
 from std_msgs.msg import String
 import cv2
 import numpy as np
+from scipy import signal
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 from collections import deque
@@ -56,7 +57,7 @@ class Perception(Node):
         # Publishers
         self.segmentation_publisher = self.create_publisher(Image, "mask", 10)
         self.exploration_publisher = self.create_publisher(Image, "exploration", 10)
-        # self.heatmap_publisher = self.create_publisher(Image, "heatmap", 10)
+        self.heatmap_publisher = self.create_publisher(Image, "heatmap", 10)
 
         # Heatmap Generation
         self.uav_pose_cache = deque(maxlen=200)
@@ -74,7 +75,7 @@ class Perception(Node):
         self.exploration_window = self.get_parameter("exploration_window").value # length and width of exploration map
         self.heatmap = self.generate_heatmap(1920, 1080) # Persistent heatmap of the area
         self.history = np.zeros_like(self.heatmap, dtype = np.uint32) # Holds how many times any given cell of the heatmap has been seen
-        self.explored = np.zeros_like(self.heatmap, dtype = np.uint32) # Marks whether a point has already been explored or not
+        self.exploration_map = np.zeros_like(self.heatmap, dtype = np.uint32) # Marks whether a point has already been explored or not
         self.state = None # Current state the UAV is in
 
 
@@ -207,14 +208,16 @@ class Perception(Node):
         position = uav_pose.position
         x_actual = position.x // self.dem_spacing
         y_actual = position.y // self.dem_spacing
-        x_low = int(max(0, (x_actual - (self.exploration_window // 2) + len(self.explored[0]) // 2)))
-        x_high = int(min(len(self.explored[0]), (x_actual + (self.exploration_window // 2) + len(self.explored[0]) // 2)))
-        y_low = int(max(0, (y_actual - (self.exploration_window // 2) + len(self.explored) // 2)))
-        y_high = int(min(len(self.explored), (y_actual + (self.exploration_window // 2) + len(self.explored) // 2)))
+        x_low = int(max(0, (x_actual - (self.exploration_window // 2) + len(self.exploration_map[0]) // 2)))
+        x_high = int(min(len(self.exploration_map[0]), (x_actual + (self.exploration_window // 2) + len(self.exploration_map[0]) // 2)))
+        y_low = int(max(0, (y_actual - (self.exploration_window // 2) + len(self.exploration_map) // 2)))
+        y_high = int(min(len(self.exploration_map), (y_actual + (self.exploration_window // 2) + len(self.exploration_map) // 2)))
         # self.get_logger().info(str(x_actual) + " " + str(y_actual))
         # self.get_logger().info(str(x_low) + " " + str(x_high) + " " + str(y_low) + " " + str(y_high))
-        part = self.explored[x_low:x_high, y_low:y_high]
-        self.exploration_publisher.publish(self.bridge.cv2_to_imgmsg(part.astype(np.uint8), "mono8"))
+        part = self.exploration_map[x_low:x_high, y_low:y_high]
+        heatmap_part = self.heatmap[x_low:x_high, y_low:y_high]
+        self.exploration_publisher.publish(self.bridge.cv2_to_imgmsg(self.exploration_map.astype(np.uint8), "mono8"))
+        self.heatmap_publisher.publish(self.bridge.cv2_to_imgmsg(self.heatmap.astype(np.uint8), "mono8"))
 
 
     def edge_mask(self, data):
@@ -394,11 +397,25 @@ class Perception(Node):
         valid_heatmap = (heatmap_indices[0] >= 0) & (heatmap_indices[0] < width_grid) & (heatmap_indices[1] >= 0) & (heatmap_indices[1] < height_grid)
         heatmap[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = heatmap_points[valid_heatmap, 2]
         self.history[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] += 1
-        if self.state == "searching" or self.state == "following":
-            self.explored[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = heatmap_points[valid_heatmap, 2]
+
+        # Update exploration map
+        mask = (heatmap_points[valid_heatmap, 2] == 255)
+        self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = np.where(mask, 255, self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] )
+        mask = (self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] < 255)
+        self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = np.where(mask, 75, self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]])
+        self.get_logger().info("done")
+        self.update_frontier()
 # Flip the heatmap vertically
         heatmap = np.flipud(heatmap)
         return heatmap
+
+    def update_frontier(self):
+        kernel = np.array([[1, 1, 1],
+                          [1, 0, 1],
+                          [1, 1, 1]])
+        convolved = signal.convolve2d(self.exploration_map == 0, kernel, mode = 'same', boundary='fill',fillvalue=0)
+        result_indices = np.where((convolved > 0) & (self.exploration_map != 0))
+        self.exploration_map[result_indices] = 155
     
     def update_heatmap(self, mask, uav_pose):
         """
