@@ -300,7 +300,7 @@ class StateMachine(Node):
         max_index = probability_map.argmax()
         if np.amax(probability_map) == 0:
             self.fault_detected = False
-            self.get_logger().info("nothing found lol")
+            self.get_logger().info("No fault found!")
             return
         self.fault_detected = True
         indices = np.unravel_index(max_index, probability_map.shape)
@@ -328,18 +328,29 @@ class StateMachine(Node):
         return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
 
     def publish_state(self, data):
+        """
+        Publishes the current state of the machine
+
+        Parameters:
+        data (String): The current state of the machine
+        """
         msg = String()
         msg.data = data
         self.state_publisher.publish(msg)
         #self.get_logger().info(self.state)
 
     def check_path_status(self):
+        """
+        Checks if the path has been completed. 
+
+        Returns:
+        Boolean: True if path has been completed, False otherwise
+        """
         if not self.path_status:
             return False
         else:
             self.path_status = False
             return True
-
 
     def state_timer_callback(self):
         self.publish_state(self.state)
@@ -347,7 +358,6 @@ class StateMachine(Node):
 
     def machine_timer_callback(self):
         self.startup()
-
 
 def main(args = None):
     rclpy.init(args=args)
@@ -357,7 +367,6 @@ def main(args = None):
     executor.spin()
     state_machine.destroy_node()
     rclpy.shutdown()
-
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@
       cy: 540.0 # optical centers
       dem_spacing: 1 # the stride between coordinates in the dem map
       sparse_dem_spacing: 10 # the stride between coordinates in the sparse dem map (used for initial bounding)
-      exploration_window: 500 # the length and width of the exploration window published 
+      exploration_window: 30 # the length and width of the exploration window published 
 
 /fault_fracture_localization:
   state_machine:
