@@ -9,8 +9,10 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPo
 from sensor_msgs.msg import Image
 from px4_msgs.msg import VehicleOdometry
 from geometry_msgs.msg import Pose
+from std_msgs.msg import String
 import cv2
 import numpy as np
+from scipy import signal
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 from collections import deque
@@ -21,6 +23,19 @@ model = YOLO('src/fault_fracture_localization/fracture-detector.engine', task='s
 class Perception(Node):
     def __init__(self):
         super().__init__("perception")
+
+        self.declare_parameters(
+            namespace = '',
+            parameters = [
+                ("fx", rclpy.Parameter.Type.DOUBLE),
+                ("fy", rclpy.Parameter.Type.DOUBLE),
+                ("cx", rclpy.Parameter.Type.DOUBLE),
+                ("cy", rclpy.Parameter.Type.DOUBLE),
+                ("dem_spacing", rclpy.Parameter.Type.INTEGER),
+                ("sparse_dem_spacing", rclpy.Parameter.Type.INTEGER),
+                ("exploration_window", rclpy.Parameter.Type.INTEGER),
+                ]
+        )
 
         # QOS profiles
         qos_best_effort_profile = QoSProfile(
@@ -37,21 +52,34 @@ class Perception(Node):
         # Subscriptions
         self.camera_subscription = self.create_subscription(Image, "/camera", self.camera_callback, 10, callback_group=camera_callback_group)
         self.uav_pose_subscription = self.create_subscription(VehicleOdometry, "/fmu/out/vehicle_odometry", self.uav_pose_callback, qos_best_effort_profile, callback_group=odometry_callback_group)
+        self.state_subscription = self.create_subscription(String, "state", self.state_callback, 10, callback_group=odometry_callback_group)
 
         # Publishers
         self.segmentation_publisher = self.create_publisher(Image, "mask", 10)
+        self.overlay_publisher = self.create_publisher(Image, "mask_overlay", 10)
+        self.exploration_publisher = self.create_publisher(Image, "exploration", 10)
         self.heatmap_publisher = self.create_publisher(Image, "heatmap", 10)
+        self.color_publisher = self.create_publisher(Image, "colored_heatmap", 10)
+        self.local_exploration_publisher = self.create_publisher(Image, "local_exploration", 10)
 
         # Heatmap Generation
         self.uav_pose_cache = deque(maxlen=200)
-        self.camera_intrinsic = np.array([[861.923198, 0, 960.0],
-                      [0, 980.985917, 540.0],
-                      [0, 0, 1]])  # Hardcoded intrinsic matrix TODO migrate to YAML file
+        #self.camera_intrinsic = np.array([[861.923198, 0, 960.0],
+        #              [0, 980.985917, 540.0],
+        #              [0, 0, 1]])
+        self.camera_intrinsic = np.array([[self.get_parameter("fx").value, 0, self.get_parameter("cx").value],
+                                          [0, self.get_parameter("fy").value, self.get_parameter("cy").value],
+                                        [0, 0, 1]])  # Hardcoded intrinsic matrix 
+        self.dem_spacing = self.get_parameter("dem_spacing").value
+        self.sparse_dem_spacing = self.get_parameter("sparse_dem_spacing").value
         self.bridge = CvBridge()
-        self.dem  = self.generate_dem(1000, 500, 1) # TODO replace with actual dem 
-        self.sparse_dem = self.generate_dem(1000, 500, 10) # Heatmap used to bound the area needed for actual computation
+        self.dem  = self.generate_dem(1000, 500, self.dem_spacing) # TODO replace with actual dem 
+        self.sparse_dem = self.generate_dem(1000, 500, self.sparse_dem_spacing) # Heatmap used to bound the area needed for actual computation
+        self.exploration_window = self.get_parameter("exploration_window").value # length and width of exploration map
         self.heatmap = self.generate_heatmap(1920, 1080) # Persistent heatmap of the area
-        self.history = np.zeros_like(self.heatmap, dtype = np.uint32)
+        self.history = np.zeros_like(self.heatmap, dtype = np.uint32) # Holds how many times any given cell of the heatmap has been seen
+        self.exploration_map = np.zeros_like(self.heatmap, dtype = np.uint32) # Marks whether a point has already been explored or not
+        self.state = None # Current state the UAV is in
 
 
 
@@ -115,6 +143,14 @@ class Perception(Node):
                      [0, 0, 0, 1]])
         return np.matmul(T, position)
 
+    def state_callback(self, msg):
+        """
+        Callback function for UAV state subscription. 
+
+        Parameters:
+        msg (String): A String containing the current state of the UAV
+        """
+        self.state = msg
 
     def uav_pose_callback(self, msg):
         """
@@ -169,7 +205,73 @@ class Perception(Node):
         results = model.predict(img, device="cuda")[0]
         pixels = self.edge_mask(results)
         self.update_heatmap(pixels, uav_pose)
+        # self.update_exploration_map(uav_pose)
         self.segmentation_publisher.publish(self.bridge.cv2_to_imgmsg(pixels.astype(np.uint8), "mono8"))
+
+        # Get local exploration map
+        position = uav_pose.position
+        x_actual = position.x // self.dem_spacing
+        y_actual = position.y // self.dem_spacing
+        x_low = int(max(0, (x_actual - (self.exploration_window // 2) + len(self.exploration_map[0]) // 2)))
+        x_high = int(min(len(self.exploration_map[0]), (x_actual + (self.exploration_window // 2) + len(self.exploration_map[0]) // 2)))
+        y_low = int(max(0, (y_actual - (self.exploration_window // 2) + len(self.exploration_map) // 2)))
+        y_high = int(min(len(self.exploration_map), (y_actual + (self.exploration_window // 2) + len(self.exploration_map) // 2)))
+        # self.get_logger().info(str(x_actual) + " " + str(y_actual))
+        # self.get_logger().info(str(x_low) + " " + str(x_high) + " " + str(y_low) + " " + str(y_high))
+        self.exploration_publisher.publish(self.bridge.cv2_to_imgmsg(self.exploration_map.astype(np.uint8), "mono8"))
+        self.heatmap_publisher.publish(self.bridge.cv2_to_imgmsg(self.heatmap.astype(np.uint8), "mono8"))
+        self.color_publisher.publish(self.bridge.cv2_to_imgmsg(cv2.applyColorMap(cv2.convertScaleAbs(self.heatmap.astype(np.uint8)), cv2.COLORMAP_JET), "bgr8"))
+
+        # Local exploration map
+        x_min = int(uav_pose.position.x // self.dem_spacing - 150 / 2) + len(self.exploration_map) // 2
+        x_max = int(uav_pose.position.x // self.dem_spacing + 150 / 2) + len(self.exploration_map) // 2
+        y_min = int(uav_pose.position.y // self.dem_spacing - 150 / 2) + len(self.exploration_map[0]) // 2
+        y_max = int(uav_pose.position.y // self.dem_spacing + 150 / 2) + len(self.exploration_map[0]) // 2
+        self.local_exploration_publisher.publish(self.bridge.cv2_to_imgmsg(cv2.applyColorMap(cv2.convertScaleAbs(self.exploration_map[x_min:x_max, y_min:y_max].astype(np.uint8)), cv2.COLORMAP_RAINBOW), "bgr8"))
+
+        # mask overlay for demonstration purposes
+        mask_blur = cv2.blur(pixels, (5, 5))
+        mask_rgb = cv2.cvtColor(mask_blur, cv2.COLOR_GRAY2RGB)
+        mask_rgb[:,:,1] = 0
+        mask_rgb[:,:,0] = 0
+
+        overlay = cv2.addWeighted(mask_rgb.astype(np.uint8), .9, img, .5, 0)
+        self.overlay_publisher.publish(self.bridge.cv2_to_imgmsg(overlay, "bgr8"))
+
+
+    def update_exploration_map(self, uav_pose):
+        """
+        Updates the exploration map with the current UAV pose. In the exploration map, explored areas are marked as 1; 
+        unexplored areas are marked as 0; and fracture points are marked as 2. Frontiers are marked as 3. 
+        
+        Explored areas are defined as a square centered at the UAV with side length equal to the exploration window. 
+        Frontiers are defined as fracture points that are adjacent to the boundary of the explored area.
+
+        Parameters:
+        uav_pose (Pose): The pose of the UAV at the time of the image
+        """
+        
+        # add explored area to exploration map; explored area is a square centered at the UAV
+        # with side length equal to the exploration window
+        x_min = int(uav_pose.position.x // self.dem_spacing - self.exploration_window / 2)
+        x_max = int(uav_pose.position.x // self.dem_spacing + self.exploration_window / 2)
+        y_min = int(uav_pose.position.y // self.dem_spacing - self.exploration_window / 2)
+        y_max = int(uav_pose.position.y // self.dem_spacing + self.exploration_window / 2)
+        self.exploration_map[y_min:y_max, x_min:x_max] = 1 
+
+        # extract fracture points from heatmap
+        x, y = np.where(self.heatmap > 0)
+        # add fracture points to exploration map
+        if self.exploration_map[x, y] == 0:
+            self.exploration_map[x, y] = 2 
+
+        # add frontiers to exploration map
+        # frontiers are fracture points that in the unexplored area 
+        # iterate through fracture points
+        for i in range(len(x)):
+            # get fracture points in the unexplored area
+            if self.exploration_map[x[i], y[i]] == 2:
+                self.exploration_map[x[i], y[i]] = 3
 
     def edge_mask(self, data):
         """
@@ -270,6 +372,10 @@ class Perception(Node):
         extrinsic_matrix (numpy.ndarra): The extrinsic matrix of the camera
         height: the height of the image being projected to in pixels
         width: the width of the image being projected to in pixels
+
+        Returns:
+        np.ndarray: Assocation of each pixel to each point
+        np.ndarray: the indices of the valid points that can be projected
         '''
 
         # To homogoneous points
@@ -306,6 +412,9 @@ class Perception(Node):
         Parameters:
         mask (numpy.ndarray): A masked grayscale edge detection image
         uav_pose (Pose): The pose of the UAV to be used for the update
+        
+        Returns
+
 
         '''
         width, height, spacing = 1920, 1080, 1
@@ -317,7 +426,6 @@ class Perception(Node):
         if len(filtered_points) == 0:
             return
 
-
         x_min, x_max = np.min(filtered_points[:, 0]), np.max(filtered_points[:, 0])
         y_min, y_max = np.min(filtered_points[:, 1]), np.max(filtered_points[:, 1])
 
@@ -326,6 +434,7 @@ class Perception(Node):
         points = points[(points[:, 0] >= x_min) & (points[:, 0] <= x_max) & (points[:, 1] >= y_min) & (points[:, 1] <= y_max)]
 
         pixel_point_association, valid_indices = self.points_to_pixels(points, extrinsic_matrix, height, width)
+        points[valid_indices]
 
         img = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
         heatmap_points = points.copy()
@@ -341,11 +450,42 @@ class Perception(Node):
         valid_heatmap = (heatmap_indices[0] >= 0) & (heatmap_indices[0] < width_grid) & (heatmap_indices[1] >= 0) & (heatmap_indices[1] < height_grid)
         heatmap[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = heatmap_points[valid_heatmap, 2]
         self.history[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] += 1
+
+        # Update exploration map
+        x_min = int(uav_pose.position.x // self.dem_spacing - self.exploration_window / 2) + len(self.exploration_map) // 2
+        x_max = int(uav_pose.position.x // self.dem_spacing + self.exploration_window / 2) + len(self.exploration_map) // 2
+        y_min = int(uav_pose.position.y // self.dem_spacing - self.exploration_window / 2) + len(self.exploration_map[0]) // 2
+        y_max = int(uav_pose.position.y // self.dem_spacing + self.exploration_window / 2) + len(self.exploration_map[0]) // 2
+        #self.get_logger().info(str(x_min) + " " + str(x_max) + " " + str(y_min) + " " + str(y_max))
+        self.exploration_map[x_min:x_max, y_min:y_max] = np.where(self.exploration_map[x_min:x_max, y_min:y_max] < 255, 75, self.exploration_map[x_min:x_max, y_min:y_max])
+        #mask = (self.exploration_map[y_min:y_max, x_min:x_max] < 255)
+        #self.exploration_map[y_min:y_max, x_min:x_max] = np.where(mask, 75, self.exploration_map[y_min:y_max, x_min:x_max])
+        mask = (heatmap_points[valid_heatmap, 2] == 255)
+        self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] = np.where(mask, 255, self.exploration_map[heatmap_indices[1][valid_heatmap], heatmap_indices[0][valid_heatmap]] )
+        x, y = np.where(self.exploration_map == 255)
+        dx = [0, 0, -1, 1]
+        dy = [1, -1, 0, 0]
+        for i in range(len(x)):
+            count = 0
+            for j in range(4):
+                if self.exploration_map[x[i] + dx[j]][y[i] + dy[j]] != 75 and self.exploration_map[x[i] + dx[j]][y[i] + dy[j]] != 255 :
+                    count += 1
+            if count >= 3:
+                self.exploration_map[x[i], y[i]] = 155
+                #self.get_logger().info("hit")
+        self.exploration_map[uav_pose.position.x // self.dem_spacing][uav_pose.position.y // self.dem_spacing] = 100 # Current position of UAV
 # Flip the heatmap vertically
         heatmap = np.flipud(heatmap)
         return heatmap
-    
+            
     def update_heatmap(self, mask, uav_pose):
+        """
+        Updates the persistent heatmap with the lastest segmented camera data
+
+        Parameters:
+        mask (np.ndarray): A segmented, grayscale image of the fault
+        uav_pose (Pose): The pose of the UAV at the time of the image
+        """
         heatmap = self.camera_projection(mask, uav_pose)
         if heatmap is None:
             return
@@ -355,7 +495,8 @@ class Perception(Node):
         heatmap = cv2.blur(heatmap, (5, 5))
         self.heatmap = np.where(self.history > 0, (self.heatmap * (self.history) + heatmap), 0)
         self.heatmap = np.divide(self.heatmap, self.history, out = np.zeros_like(self.heatmap), where=self.history!=0, casting="unsafe")
-        self.heatmap_publisher.publish(self.bridge.cv2_to_imgmsg(self.heatmap.astype(np.uint8), encoding="mono8"))
+        # self.heatmap_publisher.publish(self.bridge.cv2_to_imgmsg(self.heatmap.astype(np.uint8), encoding="mono8"))
+
 
 
 def main(args=None):

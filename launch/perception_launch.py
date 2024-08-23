@@ -12,27 +12,11 @@ def generate_launch_description():
         'parameters.yaml'
         )
     return LaunchDescription([
-        Node(
-            package="fault_fracture_localization",
-            namespace="fault_fracture_localization",
-            executable="offboard_control.py",
-            name="offboard",
-            parameters=[config],
-            ),
-
-        Node(
+       Node(
             package="fault_fracture_localization",
             namespace="fault_fracture_localization",
             executable="perception.py",
             name="perception",
-            parameters=[config],
-            ),
-
-        Node(
-            package="fault_fracture_localization",
-            namespace="fault_fracture_localization",
-            executable="state_machine.py",
-            name="state_machine",
             parameters=[config],
             ),
         ])

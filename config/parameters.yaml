@@ -1,0 +1,28 @@
+/fault_fracture_localization:
+  offboard:
+    ros__parameters:
+      control_rate: 100 # TrajectorySetpoint broadcase speed in Hz
+      target_accel: 3.0 # Target maximum acceleration in any dimension of UAV
+      time_lower_bound: 0.0 # Minimum expected amount of time for drone to travel from one waypoint to another
+      time_upper_bound: 6000.0 # Maximum expected amount of time for a drone to travel from one waypoint to another
+
+/fault_fracture_localization:
+  perception:
+    ros__parameters:
+      fx: 861.9233198 # focal length of camera
+      fy: 980.985917 # focal length of camera
+      cx: 960.0 # optical centers
+      cy: 540.0 # optical centers
+      dem_spacing: 1 # the stride between coordinates in the dem map
+      sparse_dem_spacing: 10 # the stride between coordinates in the sparse dem map (used for initial bounding)
+      exploration_window: 30 # the length and width of the exploration window published 
+
+/fault_fracture_localization:
+  state_machine:
+    ros__parameters:
+      takeoff_height: 50. # The height the drone should take off to
+      waypoint_distance: 10. # The distance between successive waypoints determine by the UAV
+      desired_velocity: 8. # The desired velocity along the x and y axis that the UAV will travel when reaching waypoints
+
+
+

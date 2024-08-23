@@ -44,6 +44,7 @@ install(PROGRAMS
   src/offboard_control.py
   src/state_machine.py
   src/perception.py
+  src/multi_uav_example.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
