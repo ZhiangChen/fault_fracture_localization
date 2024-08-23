@@ -473,6 +473,7 @@ class Perception(Node):
             if count >= 3:
                 self.exploration_map[x[i], y[i]] = 155
                 #self.get_logger().info("hit")
+        self.exploration_map[uav_pose.position.x // self.dem_spacing][uav_pose.position.y // self.dem_spacing] = 100 # Current position of UAV
 # Flip the heatmap vertically
         heatmap = np.flipud(heatmap)
         return heatmap

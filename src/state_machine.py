@@ -207,7 +207,15 @@ class StateMachine(Node):
         Parameters:
         msg (np.ndarray): A 2 dimensional array representing the exploration status of the DEM
         """
-        pass
+        self.previous_pose = self.uav_pose
+        to_cv = self.bridge.imgmsg_to_cv2(msg, desired_encoding = "mono8")
+        frontier = np.where(to_cv == 155)
+        coordinates = np.stack((frontier[0], frontier[1]))
+        current_point = [self.uav_pose[0], self.uav_pose[1]]
+        dist = np.linalg.norm(coordinates - current_point, axis=1)
+        closest = frontier[np.argmin(dist)]
+
+
 
     def path_status_callback(self, msg):
         """
