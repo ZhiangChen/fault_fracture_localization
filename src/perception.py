@@ -18,7 +18,7 @@ from ultralytics import YOLO
 from collections import deque
 
 
-model = YOLO('src/fault_fracture_localization/fracture-detector.engine', task='segment') 
+model = YOLO('src/fault_fracture_localization/model.pt', task='segment') 
 
 class Perception(Node):
     def __init__(self):
@@ -227,7 +227,7 @@ class Perception(Node):
         x_max = int(uav_pose.position.x // self.dem_spacing + 150 / 2) + len(self.exploration_map) // 2
         y_min = int(uav_pose.position.y // self.dem_spacing - 150 / 2) + len(self.exploration_map[0]) // 2
         y_max = int(uav_pose.position.y // self.dem_spacing + 150 / 2) + len(self.exploration_map[0]) // 2
-        self.local_exploration_publisher.publish(self.bridge.cv2_to_imgmsg(cv2.applyColorMap(cv2.convertScaleAbs(self.exploration_map[x_min:x_max, y_min:y_max].astype(np.uint8)), cv2.COLORMAP_RAINBOW), "bgr8"))
+        self.local_exploration_publisher.publish(self.bridge.cv2_to_imgmsg(self.exploration_map[x_min:x_max, y_min:y_max].astype(np.uint8), "mono8"))
 
         # mask overlay for demonstration purposes
         mask_blur = cv2.blur(pixels, (5, 5))
@@ -456,6 +456,10 @@ class Perception(Node):
         x_max = int(uav_pose.position.x // self.dem_spacing + self.exploration_window / 2) + len(self.exploration_map) // 2
         y_min = int(uav_pose.position.y // self.dem_spacing - self.exploration_window / 2) + len(self.exploration_map[0]) // 2
         y_max = int(uav_pose.position.y // self.dem_spacing + self.exploration_window / 2) + len(self.exploration_map[0]) // 2
+
+        # Point map: 0 - Haven't segment
+        # 75: 
+        
         #self.get_logger().info(str(x_min) + " " + str(x_max) + " " + str(y_min) + " " + str(y_max))
         self.exploration_map[x_min:x_max, y_min:y_max] = np.where(self.exploration_map[x_min:x_max, y_min:y_max] < 255, 75, self.exploration_map[x_min:x_max, y_min:y_max])
         #mask = (self.exploration_map[y_min:y_max, x_min:x_max] < 255)
@@ -473,7 +477,7 @@ class Perception(Node):
             if count >= 3:
                 self.exploration_map[x[i], y[i]] = 155
                 #self.get_logger().info("hit")
-        self.exploration_map[uav_pose.position.x // self.dem_spacing][uav_pose.position.y // self.dem_spacing] = 100 # Current position of UAV
+        #self.exploration_map[int(uav_pose.position.x // self.dem_spacing)][int(uav_pose.position.y // self.dem_spacing)] = 100 # Current position of UAV
 # Flip the heatmap vertically
         heatmap = np.flipud(heatmap)
         return heatmap
